@@ -25,7 +25,8 @@ RATE = 22050
 LEVELS = (0.35, 0.6, 0.9)             # 작게 · 보통 · 크게
 enabled = True
 level = 1
-played: list[str] = []                # 낸 소리 (시험용 기록)
+played: list[str] = []                # 낸 소리 (최근 50개, 시험용 기록)
+heard: set[str] = set()               # 한 번이라도 낸 소리
 _rendered: set[str] = set()
 
 
@@ -173,6 +174,7 @@ def render(name: str, seconds: float = 1.0, ticks: list[float] | None = None) ->
 def play(name: str, seconds: float = 1.0, ticks: list[float] | None = None) -> bool:
     """비동기로 재생 (기다리지 않음). 냈으면 True."""
     played.append(name)
+    heard.add(name)
     del played[:-50]
     if not enabled or os.environ.get("MIRACLE_MUTE") == "1" or winsound is None:
         return False

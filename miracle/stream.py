@@ -49,11 +49,19 @@ class HotkeyFilter(QAbstractNativeEventFilter):
 
 class Hotkey:
     def __init__(self, callback: Callable[[], None]):
+        from PySide6.QtCore import QCoreApplication
         self.key = "off"
         self.ok = False
         self.filter = HotkeyFilter(callback)
-        from PySide6.QtCore import QCoreApplication
-        QCoreApplication.instance().installNativeEventFilter(self.filter)
+        self.app = QCoreApplication.instance()
+        self.app.installNativeEventFilter(self.filter)
+
+    def close(self) -> None:
+        """끝낼 때: 등록을 풀고 필터도 떼어 냄 (Qt 가 정리될 때 남아 있으면 종료하다 죽을 수 있음)."""
+        self.clear()
+        if self.app is not None:
+            self.app.removeNativeEventFilter(self.filter)
+            self.app = None
 
     def set(self, key: str) -> bool:
         """단축키를 바꿈. 등록에 성공했으면(또는 끄기) True."""

@@ -933,9 +933,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, e) -> None:
         self._save_settings()
-        if self.stream_win is not None:
+        if self.stream_open:
             self.stream_win.close()
-        self.hotkey.clear()
+        self.hotkey.close()
         sound.stop()
         super().closeEvent(e)
 
@@ -1040,25 +1040,31 @@ class MainWindow(QMainWindow):
         self.hotkey_state.setText("" if key == "off" else ("✔ 등록됐어요" if ok else "✖ 다른 프로그램이 이미 쓰고 있어요"))
         self._queue_save()
 
+    @property
+    def stream_open(self) -> bool:
+        return self.stream_win is not None and self.stream_win.isVisible()
+
     def toggle_stream(self) -> None:
-        if self.stream_win is not None:
+        if self.stream_open:
             self.stream_win.close()
             return
-        self.stream_win = StreamWindow(self._stream_closed, self.act)
+        if self.stream_win is None:              # 한 번 만들면 지우지 않고 숨겼다 다시 씀
+            self.stream_win = StreamWindow(self._stream_closed, self.act)   # (닫는 도중에 지워지면 종료할 때 죽음)
+            self.stream_win.setWindowIcon(app_icon())
         idx = self.left.indexOf(self.stage)
         self.left.removeWidget(self.stage)
         self.left.insertWidget(idx, self.stage_placeholder, 1)
         self.stage_placeholder.show()
         self.stream_win.box.addWidget(self.stage)
         self.stage.show()
-        self.stream_win.setWindowIcon(app_icon())
         self.stream_win.show()
         self.stream_btn.setText("↩ 무대 되돌리기")
         log.info("방송 창 열기")
 
     def _stream_closed(self) -> None:
-        self.stream_win = None
         idx = self.left.indexOf(self.stage_placeholder)
+        if idx < 0:
+            return
         self.left.removeWidget(self.stage_placeholder)
         self.stage_placeholder.hide()
         self.left.insertWidget(idx, self.stage, 1)

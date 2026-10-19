@@ -329,7 +329,7 @@ def t_sound() -> None:
     with wave.open(str(spin), "rb") as w:
         ok = ok and w.getnframes() >= sound.RATE * 2
     check("효과음 합성 (팡파르·딩·드럼롤·주사위·틱 …)", ok)
-    check("효과음 기록 (당첨자 드럼롤 · 오류 머쓱)", "drumroll" in sound.played and "boop" in sound.played)
+    check("효과음 기록 (당첨자 드럼롤 · 오류 머쓱)", {"drumroll", "boop", "pop", "rattle", "win"} <= sound.heard)
 
 
 def t_stream() -> None:
@@ -342,7 +342,7 @@ def t_stream() -> None:
     sw = win.stream_win
     check("방송 창 열기 (무대가 옮겨 감)", sw is not None and win.stage.parent() is sw and win.stage_placeholder.isVisible())
     win.toggle_stream()
-    check("방송 창 닫기 (무대가 돌아옴)", win.stream_win is None and win.stage.parent() is not sw
+    check("방송 창 닫기 (무대가 돌아옴)", not win.stream_open and win.stage.parent() is not sw
           and not win.stage_placeholder.isVisible() and win.left.indexOf(win.stage) >= 0)
     win.hotkey_box.setCurrentIndex([k for k, _ in stream.HOTKEYS].index("ctrl_alt_m"))
     check("전역 단축키 선택", win.hotkey.key == "ctrl_alt_m" and "등록" in win.hotkey_state.text())
@@ -381,7 +381,7 @@ def t_stream2() -> None:
 
 
 def t_end() -> None:
-    win.hotkey.clear()
+    win.close()                    # 실제 앱처럼 창을 닫아서 끝냄 (단축키 해제 · 설정 저장)
     app.quit()
 
 
@@ -416,4 +416,5 @@ fails = [r for r in RESULTS if not r[1]]
 print(f"\n통과 {len(RESULTS) - len(fails)} / {len(RESULTS)}" + (f"   실패: {[r[0] for r in fails]}" if fails else ""),
       flush=True)
 shutil.rmtree(TMP, ignore_errors=True)
-os._exit(1 if fails else 0)
+# os._exit 로 강제 종료하면 GitHub Windows 러너에서 Qt 정리 중 가끔 접근 위반이 나서, 정상 종료로 끝냄
+sys.exit(1 if fails else 0)
