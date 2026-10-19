@@ -106,6 +106,7 @@ class WheelWidget(QWidget):
         R = side / 2 - 14
         c = QPointF(self.width() / 2, self.height() / 2 + 8)
         if R < 40:
+            p.end()
             return
         p.setPen(Qt.NoPen)                                            # 그림자
         p.setBrush(QColor(0, 0, 0, 35))
@@ -120,6 +121,7 @@ class WheelWidget(QWidget):
             p.setFont(f)
             p.setPen(QColor("#5A6B60"))
             p.drawText(QRectF(c.x() - R, c.y() - 40, 2 * R, 80), Qt.AlignCenter, "목록에 항목을 넣어 주세요")
+            p.end()
             return
         rect = QRectF(c.x() - R, c.y() - R, 2 * R, 2 * R)
         spans = self.spans()

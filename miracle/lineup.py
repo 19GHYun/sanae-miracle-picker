@@ -1,0 +1,205 @@
+# -*- coding: utf-8 -*-
+"""팀 나누기 · 순서 정하기 무대: 한 명씩 차례로 나눠 주거나(팀 카드), 1번부터 불러 준다(순서 목록)."""
+from __future__ import annotations
+
+import math
+import time
+from typing import Callable
+
+from PySide6.QtCore import QRectF, Qt, QTimer
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen
+from PySide6.QtWidgets import QWidget
+
+TEAM_COLORS = ["#E8657A", "#3D7DD8", "#2E9E5B", "#F2A230", "#8E6CD8", "#3FB7C4", "#D8579A", "#7FBF3F",
+               "#F28C38", "#5B8DEF", "#C9A030", "#4FA3A0"]
+NAMED_COLORS = {"빨강": "#E04848", "파랑": "#3D6FD8", "초록": "#2E9E5B", "노랑": "#E0B020", "보라": "#8E5CD8",
+                "주황": "#F08030", "하늘": "#3FB7E4", "분홍": "#E870A8", "하양": "#B8B8B8", "검정": "#3A3A3A",
+                "회색": "#8A8A8A", "갈색": "#8E5B36"}
+
+
+def team_color(name: str, i: int) -> QColor:
+    base = name.replace(" 팀", "")
+    return QColor(NAMED_COLORS.get(base, TEAM_COLORS[i % len(TEAM_COLORS)]))
+
+
+def _fit(p: QPainter, text: str, rect: QRectF, size: int, bold: bool = True, minimum: int = 9) -> None:
+    f = QFont("Malgun Gothic")
+    f.setBold(bold)
+    f.setPixelSize(size)
+    while size > minimum and QFontMetricsF(f).horizontalAdvance(text) > rect.width():
+        size -= 1
+        f.setPixelSize(size)
+    p.setFont(f)
+    p.drawText(rect, Qt.AlignLeft | Qt.AlignVCenter, QFontMetricsF(f).elidedText(text, Qt.ElideRight, rect.width()))
+
+
+class _Reveal(QWidget):
+    """한 명씩 차례로 보여 주는 무대의 공통 부분."""
+
+    STEP = 0.3
+    MAX_TOTAL = 9.0       # 사람이 많으면 한 명당 시간을 줄여서 이 안에
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.shown = 0
+        self.total = 0
+        self.phase = "idle"
+        self.speed = 1.0
+        self._step = self.STEP
+        self._t0 = 0.0
+        self._on_done: Callable[[], None] | None = None
+        self.timer = QTimer(self, timeout=self._tick, interval=30)
+
+    @property
+    def busy(self) -> bool:
+        return self.phase == "running"
+
+    def _begin(self, total: int, on_done: Callable[[], None], speed: float) -> None:
+        self.total, self.shown, self.speed, self._on_done = total, 0, speed, on_done
+        self._step = min(self.STEP, self.MAX_TOTAL / max(1, total))
+        self.phase, self._t0 = "running", time.monotonic()
+        self.timer.start()
+
+    def skip(self) -> None:
+        if self.busy:
+            self.shown = self.total
+            self._finish()
+
+    def _finish(self) -> None:
+        self.phase = "done"
+        self.timer.stop()
+        self.update()
+        if self._on_done:
+            self._on_done()
+
+    def _tick(self) -> None:
+        self.shown = min(self.total, int((time.monotonic() - self._t0) / (self._step * self.speed)) + 1)
+        if self.shown >= self.total and time.monotonic() - self._t0 > (self.total * self._step + 0.4) * self.speed:
+            self._finish()
+            return
+        self.update()
+
+
+class TeamsStage(_Reveal):
+    STEP = 0.22
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.teams: list[tuple[str, list[str]]] = []
+        self.deal: list[tuple[int, str]] = []      # 나눠 주는 순서 (팀 번호, 이름)
+
+    def start(self, teams: list[tuple[str, list[str]]], on_done: Callable[[], None], speed: float = 1.0) -> None:
+        self.teams = teams
+        n = len(teams)
+        longest = max((len(m) for _, m in teams), default=0)
+        self.deal = [(t, teams[t][1][i]) for i in range(longest) for t in range(n) if i < len(teams[t][1])]
+        self._begin(len(self.deal), on_done, speed)
+
+    def preview(self, n_teams: int, style_names: list[str]) -> None:
+        if self.busy:
+            return
+        self.teams = [(name, []) for name in style_names[:n_teams]]
+        self.deal, self.shown, self.phase = [], 0, "idle"
+        self.update()
+
+    def paintEvent(self, _e) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        n = len(self.teams)
+        if not n:
+            p.end()
+            return
+        cols = 1 if n == 1 else 2 if n <= 4 else 3 if n <= 9 else 4
+        rows = math.ceil(n / cols)
+        gap = 12
+        w = (self.width() - 24 - gap * (cols - 1)) / cols
+        h = (self.height() - 24 - gap * (rows - 1)) / rows
+        members: list[list[str]] = [[] for _ in range(n)]
+        for t, name in self.deal[:self.shown]:
+            members[t].append(name)
+        newest = self.deal[self.shown - 1] if self.busy and self.shown else None
+        for i, (name, _) in enumerate(self.teams):
+            r = QRectF(12 + (i % cols) * (w + gap), 12 + (i // cols) * (h + gap), w, h)
+            col = team_color(name, i)
+            path = QPainterPath()
+            path.addRoundedRect(r, 14, 14)
+            p.setPen(QPen(col, 2.5))
+            p.setBrush(QColor(255, 255, 255, 228))
+            p.drawPath(path)
+            head = QRectF(r.left(), r.top(), r.width(), 36)
+            p.save()
+            p.setClipPath(path)
+            p.fillRect(head, col)
+            p.restore()
+            p.setPen(QColor("#FFFFFF"))
+            _fit(p, f"  {name}   ({len(members[i])}명)", head.adjusted(6, 0, -6, 0), 15)
+            names = members[i]
+            if not names:
+                continue
+            body = r.adjusted(14, 44, -10, -8)
+            per_col = max(1, int(body.height() // 24))
+            ncol = math.ceil(len(names) / per_col)
+            cw = body.width() / max(1, ncol)
+            line_h = min(24.0, body.height() / max(1, min(per_col, len(names))))
+            for k, who in enumerate(names):
+                cell = QRectF(body.left() + (k // per_col) * cw, body.top() + (k % per_col) * line_h, cw - 6, line_h)
+                hot = newest is not None and newest == (i, who) and k == len(names) - 1
+                p.setPen(QColor("#C8102E") if hot else QColor("#22352A"))
+                _fit(p, f"· {who}", cell, 15 if hot else 14, bold=hot)
+        p.end()
+
+
+class OrderStage(_Reveal):
+    STEP = 0.45
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.names: list[str] = []
+
+    def start(self, names: list[str], on_done: Callable[[], None], speed: float = 1.0) -> None:
+        self.names = names
+        self._begin(len(names), on_done, speed)
+
+    def paintEvent(self, _e) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        top = QRectF(24, 20, w - 48, min(120.0, h * 0.26))
+        path = QPainterPath()
+        path.addRoundedRect(top, 18, 18)
+        p.setPen(QPen(QColor("#2E9E5B"), 3))
+        p.setBrush(QColor("#FFFFFF"))
+        p.drawPath(path)
+        if self.shown:
+            k = self.shown
+            big = QFont("Malgun Gothic")
+            big.setBold(True)
+            big.setPixelSize(22)
+            p.setFont(big)
+            p.setPen(QColor("#2E9E5B"))
+            p.drawText(top.adjusted(22, 0, 0, 0), Qt.AlignLeft | Qt.AlignVCenter, f"{k}번")
+            p.setPen(QColor("#C8102E") if k == 1 else QColor("#22352A"))
+            _fit(p, self.names[k - 1], top.adjusted(110, 0, -20, 0), 40)
+        else:
+            f = QFont("Malgun Gothic", 14)
+            f.setBold(True)
+            p.setFont(f)
+            p.setPen(QColor("#7A8B80"))
+            p.drawText(top, Qt.AlignCenter, "✨ 기적을 일으키면 1번부터 불러 줄게요")
+        body = QRectF(24, top.bottom() + 16, w - 48, h - top.bottom() - 28)
+        shown = self.names[:self.shown]
+        if not shown:
+            p.end()
+            return
+        per_col = max(1, int(body.height() // 28))
+        ncol = min(4, max(1, math.ceil(len(self.names) / per_col)))
+        per_col = max(per_col, math.ceil(len(self.names) / ncol))
+        cw = body.width() / ncol
+        line_h = min(28.0, body.height() / per_col)
+        for i, who in enumerate(shown):
+            cell = QRectF(body.left() + (i // per_col) * cw, body.top() + (i % per_col) * line_h, cw - 10, line_h)
+            p.setPen(QColor("#2E9E5B"))
+            _fit(p, f"{i + 1:>2}.", QRectF(cell.left(), cell.top(), 34, line_h), 14)
+            p.setPen(QColor("#C8102E") if i == 0 else QColor("#22352A"))
+            _fit(p, who, cell.adjusted(36, 0, 0, 0), 14, bold=i == self.shown - 1)
+        p.end()

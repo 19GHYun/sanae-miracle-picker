@@ -23,6 +23,9 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
 
 from . import __version__, core
 from .cutin import MiracleCutIn
+from .dice import DiceStage
+from .ladder import LadderStage, is_blank
+from .lineup import OrderStage, TeamsStage
 from .raffle import RaffleStage
 from .sanae import IDLE_LINES, SPIN_LINES, SanaeWidget, Sprites
 from .store import Draw, Store, data_dir, now_text
@@ -32,7 +35,12 @@ log = logging.getLogger("Miracle")
 TITLE = "사나에의 기적 추첨기"
 SPEED = float(os.environ.get("MIRACLE_SPEED") or 1.0)
 WHEEL_SECONDS = 5.5
-MODES = (("wheel", "🎡  룰렛"), ("raffle", "🎫  당첨자 뽑기"))
+MODES = (("wheel", "🎡 룰렛"), ("raffle", "🎫 당첨자 뽑기"), ("ladder", "🔀 사다리"), ("teams", "👥 팀 나누기"),
+         ("order", "🔢 순서 정하기"), ("dice", "🎲 주사위"))
+MODE_KEYS = [k for k, _ in MODES]
+MODE_ICONS = {"wheel": "🎡", "raffle": "🎫", "ladder": "🔀", "teams": "👥", "order": "🔢", "dice": "🎲"}
+TEAM_STYLES = (("number", "1팀 · 2팀 …"), ("touhou", "동방 세력 (하쿠레이 · 모리야 …)"), ("color", "색깔 (빨강 · 파랑 …)"))
+DICE_KINDS = (("dice", "주사위"), ("coin", "동전 던지기"), ("number", "숫자 뽑기"))
 STYLE = """
 QWidget#root { background: #F2FAF4; }
 QLabel { font-family: 'Malgun Gothic'; color: #22352A; }
@@ -40,7 +48,7 @@ QLabel#hint { color: #6B7F72; font-size: 11px; }
 QLabel#result { font-size: 13px; padding: 2px 4px; }
 QPushButton { font-family: 'Malgun Gothic'; font-size: 12px; }
 QPushButton#mode { background: #FFFFFF; color: #2E6B48; border: 1px solid #B9DEC6; border-radius: 16px;
-                   padding: 7px 18px; font-weight: 700; font-size: 13px; }
+                   padding: 6px 11px; font-weight: 700; font-size: 13px; }
 QPushButton#mode:checked { background: #2E9E5B; color: #FFFFFF; border-color: #2E9E5B; }
 QPushButton#mode:disabled { color: #9FBFAE; }
 QPushButton#go { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #2E9E5B, stop:1 #3D5BA9);
@@ -99,14 +107,20 @@ class Stage(QWidget):
         self.setMinimumSize(580, 430)
         self.wheel = WheelWidget(self)
         self.raffle = RaffleStage(self)
+        self.ladder = LadderStage(self)
+        self.teams = TeamsStage(self)
+        self.order = OrderStage(self)
+        self.dice = DiceStage(self)
+        self.boards = {"wheel": self.wheel, "raffle": self.raffle, "ladder": self.ladder, "teams": self.teams,
+                       "order": self.order, "dice": self.dice}
         self.sanae = SanaeWidget(self)
         self.cutin = MiracleCutIn(self)
         self.mode = "wheel"
 
     def set_mode(self, mode: str) -> None:
         self.mode = mode
-        self.wheel.setVisible(mode == "wheel")
-        self.raffle.setVisible(mode == "raffle")
+        for key, board in self.boards.items():
+            board.setVisible(key == mode)
         self._layout()
 
     def resizeEvent(self, _e) -> None:
@@ -115,8 +129,8 @@ class Stage(QWidget):
     def _layout(self) -> None:
         w, h = self.width(), self.height()
         area = QRect(self.LEFT, 6, max(200, w - self.LEFT - 10), h - 12)
-        self.wheel.setGeometry(area)
-        self.raffle.setGeometry(area)
+        for board in self.boards.values():
+            board.setGeometry(area)
         self.sanae.move(-30, h - self.sanae.height() + 2)
         self.sanae.raise_()
         if self.cutin.isVisible():
@@ -187,7 +201,6 @@ class MainWindow(QMainWindow):
             bar.addWidget(b)
             self.mode_btns[key] = b
         bar.addStretch(1)
-        bar.addWidget(QLabel("사다리·팀 나누기·순서 정하기·주사위는 곧 나와요", objectName="hint"))
         left.addLayout(bar)
         self.stage = Stage(root)
         left.addWidget(self.stage, 1)
@@ -265,6 +278,10 @@ class MainWindow(QMainWindow):
         wv.addStretch(1)
         self.opts.addWidget(wheel_opts)
         self.opts.addWidget(self._raffle_opts())
+        self.opts.addWidget(self._ladder_opts())
+        self.opts.addWidget(self._teams_opts())
+        self.opts.addWidget(self._hint_opts("목록을 섞어서 1번부터 한 명씩 불러 줘요.\n발표 순서 · 게임 차례 · 청소 당번 정하기에."))
+        self.opts.addWidget(self._dice_opts())
         v.addWidget(self.opts)
         return w
 
@@ -295,6 +312,139 @@ class MainWindow(QMainWindow):
             c.toggled.connect(self._queue_save)
             v.addWidget(c)
         return w
+
+    def _hint_opts(self, text: str) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(0, 6, 0, 0)
+        lab = QLabel(text, objectName="hint")
+        lab.setWordWrap(True)
+        v.addWidget(lab)
+        v.addStretch(1)
+        return w
+
+    def _ladder_opts(self) -> QWidget:
+        s = self.store.settings
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(0, 6, 0, 0)
+        v.setSpacing(5)
+        v.addWidget(QLabel("<b>아래 칸 결과</b>  (한 줄에 하나 · 모자라면 '꽝')"))
+        self.ladder_text = QPlainTextEdit()
+        self.ladder_text.setPlainText(s.ladder_results)
+        self.ladder_text.setPlaceholderText("당첨\n커피 쏘기\n(비워 두면 당첨 하나 + 나머지 꽝)")
+        self.ladder_text.setFixedHeight(96)
+        self.ladder_text.textChanged.connect(self._options_changed)
+        v.addWidget(self.ladder_text)
+        tip = QLabel(f"참가자는 목록에서 (2~{core.LADDER_MAX}명). 진행 중에 버튼을 누르면 남은 사람을 한꺼번에 공개해요.",
+                     objectName="hint")
+        tip.setWordWrap(True)
+        v.addWidget(tip)
+        return w
+
+    def _teams_opts(self) -> QWidget:
+        s = self.store.settings
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(0, 6, 0, 0)
+        v.setSpacing(5)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("<b>팀 수</b>"))
+        self.teams_count = QSpinBox()
+        self.teams_count.setRange(2, 12)
+        self.teams_count.setValue(max(2, min(12, s.teams_count)))
+        self.teams_count.setSuffix(" 팀")
+        self.teams_count.valueChanged.connect(self._options_changed)
+        row.addWidget(self.teams_count)
+        row.addStretch(1)
+        v.addLayout(row)
+        self.teams_style = QComboBox()
+        for key, label in TEAM_STYLES:
+            self.teams_style.addItem(label, key)
+        self.teams_style.setCurrentIndex(max(0, [k for k, _ in TEAM_STYLES].index(s.teams_style)
+                                             if s.teams_style in dict(TEAM_STYLES) else 0))
+        self.teams_style.currentIndexChanged.connect(self._options_changed)
+        v.addWidget(self.teams_style)
+        tip = QLabel("섞어서 차례로 나눠 줘서 팀 인원 차이는 많아야 1명이에요.", objectName="hint")
+        tip.setWordWrap(True)
+        v.addWidget(tip)
+        return w
+
+    def _dice_opts(self) -> QWidget:
+        s = self.store.settings
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(0, 6, 0, 0)
+        v.setSpacing(5)
+        self.dice_kind = QComboBox()
+        for key, label in DICE_KINDS:
+            self.dice_kind.addItem(label, key)
+        self.dice_kind.setCurrentIndex([k for k, _ in DICE_KINDS].index(s.dice_kind) if s.dice_kind in dict(DICE_KINDS) else 0)
+        self.dice_kind.currentIndexChanged.connect(self._options_changed)
+        v.addWidget(self.dice_kind)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("개수"))
+        self.dice_count = QSpinBox()
+        self.dice_count.setRange(1, 10)
+        self.dice_count.setValue(max(1, min(10, s.dice_count)))
+        self.dice_count.valueChanged.connect(self._options_changed)
+        row.addWidget(self.dice_count)
+        self.dice_sides_label = QLabel("면")
+        row.addWidget(self.dice_sides_label)
+        self.dice_sides = QComboBox()
+        for n in core.DICE_SIDES:
+            self.dice_sides.addItem(f"d{n}", n)
+        self.dice_sides.setCurrentIndex(core.DICE_SIDES.index(s.dice_sides) if s.dice_sides in core.DICE_SIDES else 1)
+        self.dice_sides.currentIndexChanged.connect(self._options_changed)
+        row.addWidget(self.dice_sides)
+        row.addStretch(1)
+        v.addLayout(row)
+        self.num_row = QWidget()
+        nr = QHBoxLayout(self.num_row)
+        nr.setContentsMargins(0, 0, 0, 0)
+        self.num_lo, self.num_hi = QSpinBox(), QSpinBox()
+        for box, val in ((self.num_lo, s.num_lo), (self.num_hi, s.num_hi)):
+            box.setRange(-999999, 999999)
+            box.setValue(val)
+            box.valueChanged.connect(self._options_changed)
+        nr.addWidget(self.num_lo)
+        nr.addWidget(QLabel("~"))
+        nr.addWidget(self.num_hi)
+        nr.addStretch(1)
+        v.addWidget(self.num_row)
+        self.num_unique = QCheckBox("같은 숫자는 한 번만")
+        self.num_unique.setChecked(s.num_unique)
+        self.num_unique.toggled.connect(self._options_changed)
+        v.addWidget(self.num_unique)
+        tip = QLabel("주사위 모드는 목록을 쓰지 않아요.", objectName="hint")
+        v.addWidget(tip)
+        return w
+
+    def _dice_spec(self) -> tuple[str, int, int, int, int, bool]:
+        return (self.dice_kind.currentData(), self.dice_count.value(), self.dice_sides.currentData(),
+                self.num_lo.value(), self.num_hi.value(), self.num_unique.isChecked())
+
+    def _options_changed(self, *_a) -> None:
+        kind = self.dice_kind.currentData()
+        self.dice_sides.setVisible(kind == "dice")
+        self.dice_sides_label.setVisible(kind == "dice")
+        self.num_row.setVisible(kind == "number")
+        self.num_unique.setVisible(kind == "number")
+        self._preview()
+        self._queue_save()
+
+    def _preview(self) -> None:
+        """추첨 전 무대 미리보기 (사다리 이름·결과 칸, 팀 카드, 주사위 개수)."""
+        names = core.names_of(core.parse(self.editor.toPlainText()))
+        if self.mode == "ladder":
+            names = names[:core.LADDER_MAX]
+            self.stage.ladder.preview(names, core.ladder_results(self.ladder_text.toPlainText(), len(names)))
+        elif self.mode == "teams":
+            n = self.teams_count.value()
+            self.stage.teams.preview(n, core.team_names(n, self.teams_style.currentData()))
+        elif self.mode == "dice":
+            kind, count, sides, lo, hi, _u = self._dice_spec()
+            self.stage.dice.preview(kind, count, sides, lo, hi)
 
     def _add_tier(self, name: str, count: int) -> None:
         roww = QWidget()
@@ -358,17 +508,24 @@ class MainWindow(QMainWindow):
     def _refresh_history(self) -> None:
         self.hist.clear()
         for d in self.store.history[:200]:
-            icon = "🎡" if d.mode == "wheel" else "🎫"
+            icon = MODE_ICONS.get(d.mode, "✨")
             item = QListWidgetItem(f"{d.when[5:16].replace('T', ' ')}  {icon} {d.title}  ({d.count}개)\n"
                                    f"→ {core.summary(d.mode, d.result)}\n   시드 {core.seed_text(d.seed)} · 지문 {d.print_}")
             item.setData(Qt.UserRole, d)
             self.hist.addItem(item)
 
     def draw_text(self, d: Draw) -> str:
+        kind = core.MODE_NAMES.get(d.mode, d.mode)
         lines = [f"[{TITLE}] {d.when.replace('T', ' ')}",
-                 f"{'룰렛' if d.mode == 'wheel' else '당첨자 뽑기'} · 목록: {d.title} ({d.count}개)"]
+                 f"{kind} · {d.title}" if d.mode == "dice" else f"{kind} · 목록: {d.title} ({d.count}개)"]
         if d.mode == "wheel":
             lines.append(f"결과: {d.result[0]}")
+        elif d.mode == "order":
+            lines += [f"{i + 1}. {n}" for i, n in enumerate(d.result)]
+        elif d.mode == "ladder":
+            lines += [f"{a} → {b}" for a, b in d.result]
+        elif d.mode == "dice":
+            lines.append(core.summary("dice", d.result))
         else:
             lines += [f"{tier}: {', '.join(names) if names else '없음'}" for tier, names in d.result]
         lines.append(f"시드 {core.seed_text(d.seed)} · 목록 지문 {d.print_}")
@@ -469,6 +626,7 @@ class MainWindow(QMainWindow):
                            + "   ·   한 줄에 하나, '이름 x3' = 세 배")
         if not self._programmatic:
             self.stage.wheel.set_entries(entries)
+        self._preview()
         self._queue_save()
 
     # ── 모드 ──
@@ -479,18 +637,24 @@ class MainWindow(QMainWindow):
         self.mode = mode
         self.mode_btns[mode].setChecked(True)
         self.stage.set_mode(mode)
-        self.opts.setCurrentIndex(0 if mode == "wheel" else 1)
+        self.opts.setCurrentIndex(MODE_KEYS.index(mode))
+        self.editor.setEnabled(mode != "dice")                  # 주사위는 목록을 안 씀
+        self._options_changed()
         self._update_go()
         self._queue_save()
 
     @property
     def busy(self) -> bool:
-        r = self.stage.raffle
-        return self.stage.wheel.spinning or r.phase == "rolling" or r.waiting
+        r, st = self.stage.raffle, self.stage
+        return (st.wheel.spinning or r.phase == "rolling" or r.waiting
+                or any(b.busy for b in (st.ladder, st.teams, st.order, st.dice)))
 
     def _update_go(self) -> None:
-        r = self.stage.raffle
-        if self.stage.wheel.spinning or r.phase == "rolling":
+        r, st = self.stage.raffle, self.stage
+        if any(b.busy for b in (st.ladder, st.teams, st.order, st.dice)):
+            self.go.setText("⏩ 바로 결과 보기")
+            self.go.setEnabled(True)
+        elif st.wheel.spinning or r.phase == "rolling":
             self.go.setText("기적이 일어나는 중…")
             self.go.setEnabled(False)
         elif r.waiting and not r.auto:
@@ -515,13 +679,16 @@ class MainWindow(QMainWindow):
             r.next()
             self._update_go()
             return
+        for board in (self.stage.ladder, self.stage.teams, self.stage.order, self.stage.dice):
+            if board.busy:                                       # 진행 중 → 바로 결과
+                board.skip()
+                self._update_go()
+                return
         if self.busy:
             return
         entries = core.parse(self.editor.toPlainText())
-        if self.mode == "wheel":
-            self._spin(entries)
-        else:
-            self._draw(entries)
+        {"wheel": self._spin, "raffle": self._draw, "ladder": self._ladder, "teams": self._teams,
+         "order": self._order, "dice": lambda _e: self._dice()}[self.mode](entries)
 
     def _title(self) -> str:
         name = self.list_box.currentText()
@@ -603,6 +770,104 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._update_go)
         log.info("당첨자 뽑기 결과: %s", core.summary("raffle", results))
 
+    def _record(self, mode: str, title: str, count: int, seed: int, entries: list[core.Entry], result, text: str) -> None:
+        self.store.add(Draw(now_text(), mode, title, count, seed, core.fingerprint(entries), result, text))
+        self._refresh_history()
+        self.result.setText(f"{MODE_ICONS[mode]} {core.summary(mode, result)}   ·   시드 {core.seed_text(seed)}")
+        QTimer.singleShot(0, self._update_go)
+        log.info("%s 결과: %s", core.MODE_NAMES[mode], core.summary(mode, result))
+
+    # ── 사다리 ──
+    def _ladder(self, entries: list[core.Entry]) -> None:
+        names = core.names_of(entries)
+        if not 2 <= len(names) <= core.LADDER_MAX:
+            self.stage.sanae.set_mode("oops", f"사다리는 2~{core.LADDER_MAX}명이 탈 수 있어요!", 3.0)
+            return
+        bottom = core.ladder_results(self.ladder_text.toPlainText(), len(names))
+        seed = core.new_seed()
+        lad = core.ladder(len(names), seed)
+        self._pending = (entries, seed, self.editor.toPlainText(), names, bottom, lad)
+        self.stage.sanae.set_mode("spin", "어디로 내려갈까요~?", 2.0)
+        self.stage.ladder.start(names, bottom, lad, self._ladder_step, self._ladder_done, SPEED)
+        self._update_go()
+
+    def _ladder_step(self, name: str, result: str) -> None:
+        if is_blank(result):
+            self.stage.sanae.say(f"{name}: {result}", 1.6)
+        else:
+            self.stage.sanae.set_mode("happy", f"「{name}」 → {result}!", 2.5)
+
+    def _ladder_done(self) -> None:
+        entries, seed, text, names, bottom, lad = self._pending
+        pairs = [[names[s], bottom[lad.end_of(s)]] for s in range(len(names))]
+        hits = [(a, b) for a, b in pairs if not is_blank(b)]
+        if len(hits) == 1:
+            self.stage.cutin.play("✨ 사다리 결과 ✨", f"{hits[0][0]} → {hits[0][1]}", SPEED, hide=self.stage.sanae)
+        else:
+            self.stage.cutin.play("✨ 사다리 완료 ✨", "모두 공개!", SPEED, hide=self.stage.sanae)
+        self._record("ladder", self._title(), len(names), seed, entries, pairs, text)
+
+    # ── 팀 나누기 ──
+    def _teams(self, entries: list[core.Entry]) -> None:
+        names = core.names_of(entries)
+        if len(names) < 2:
+            self.stage.sanae.set_mode("oops", "두 명 이상 적어 주세요!", 3.0)
+            return
+        n = min(self.teams_count.value(), len(names))
+        seed = core.new_seed()
+        result = core.teams(entries, n, seed, self.teams_style.currentData())
+        self._pending = (entries, seed, self.editor.toPlainText(), result)
+        self.stage.sanae.set_mode("spin", "팀을 나눠 볼게요!", 2.0)
+        self.stage.teams.start(result, self._teams_done, SPEED)
+        self._update_go()
+
+    def _teams_done(self) -> None:
+        entries, seed, text, result = self._pending
+        self.stage.sanae.set_mode("happy", "팀이 정해졌어요! 다들 힘내요~", 4.0)
+        self.stage.cutin.play("✨ 팀 나누기 완료 ✨", f"{len(result)}팀 · {len(entries)}명", SPEED, hide=self.stage.sanae)
+        self._record("teams", self._title(), len(entries), seed, entries, [[t, list(m)] for t, m in result], text)
+
+    # ── 순서 정하기 ──
+    def _order(self, entries: list[core.Entry]) -> None:
+        if len(entries) < 2:
+            self.stage.sanae.set_mode("oops", "두 명 이상 적어 주세요!", 3.0)
+            return
+        seed = core.new_seed()
+        result = core.order(entries, seed)
+        self._pending = (entries, seed, self.editor.toPlainText(), result)
+        self.stage.sanae.set_mode("spin", "순서를 정해 볼게요!", 2.0)
+        self.stage.order.start(result, self._order_done, SPEED)
+        self._update_go()
+
+    def _order_done(self) -> None:
+        entries, seed, text, result = self._pending
+        self.stage.sanae.set_mode("happy", f"1번은 「{result[0]}」!", 4.0)
+        self.stage.cutin.play("✨ 1번은… ✨", result[0], SPEED, hide=self.stage.sanae)
+        self._record("order", self._title(), len(entries), seed, entries, result, text)
+
+    # ── 주사위 · 동전 · 숫자 ──
+    def _dice(self) -> None:
+        kind, count, sides, lo, hi, unique = self._dice_spec()
+        seed = core.new_seed()
+        values = core.roll(kind, seed, count, sides, lo, hi, unique)
+        label = core.dice_label(kind, len(values), sides, lo, hi)
+        self._pending = (seed, label, values, kind)
+        self.stage.sanae.set_mode("spin", {"coin": "던져 볼게요~!", "number": "숫자를 뽑아 볼게요!"}.get(kind, "굴려 볼게요~!"), 2.0)
+        self.stage.dice.start(kind, values, sides, lo, hi, self._dice_done, SPEED)
+        self._update_go()
+
+    def _dice_done(self) -> None:
+        seed, label, values, kind = self._pending
+        if kind == "dice" and len(values) > 1:
+            big = f"합계 {sum(values)}"
+        elif kind == "coin" and len(values) == 1:
+            big = f"{values[0]}면!"
+        else:
+            big = ", ".join(str(v) for v in values)
+        self.stage.sanae.set_mode("happy", f"{big}! 기적이에요~", 4.0)
+        self.stage.cutin.play(f"✨ {label} ✨", big, SPEED, hide=self.stage.sanae, burst=60)
+        self._record("dice", label, len(values), seed, [], [label, values], "")
+
     # ── 설정 저장 ──
     def _queue_save(self, *_a) -> None:
         self._save_timer.start()
@@ -617,6 +882,10 @@ class MainWindow(QMainWindow):
         s.exclude_last = self.exclude_last.isChecked()
         s.auto_reveal = self.auto.isChecked()
         s.tiers = [[edit.text(), spin.value()] for _, edit, spin in self.tier_rows]
+        s.ladder_results = self.ladder_text.toPlainText()
+        s.teams_count = self.teams_count.value()
+        s.teams_style = self.teams_style.currentData()
+        s.dice_kind, s.dice_count, s.dice_sides, s.num_lo, s.num_hi, s.num_unique = self._dice_spec()
         s.geometry = bytes(self.saveGeometry().toHex()).decode()
         self.store.save_settings()
 

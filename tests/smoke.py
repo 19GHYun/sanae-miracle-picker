@@ -190,12 +190,137 @@ def t_persist() -> None:
     check("앱 아이콘", not mapp.app_icon().isNull())
 
 
+def t_core2() -> None:
+    lad = core.ladder(6, 42)
+    check("사다리: 1:1 대응", sorted(lad.end_of(s) for s in range(6)) == list(range(6)))
+    check("사다리: 칸마다 가로줄", {c for _, c in lad.rungs} == set(range(5)))
+    check("사다리 결과 칸 맞추기", core.ladder_results("", 3) == ["당첨", "꽝", "꽝"]
+          and core.ladder_results("a\nb\nc\nd", 2) == ["a", "b"])
+    t = core.teams(core.parse("\n".join("abcdefg")), 3, 1)
+    check("팀: 인원 차이 1명 이하", max(len(m) for _, m in t) - min(len(m) for _, m in t) <= 1)
+    check("팀이 사람보다 많으면 사람 수만큼", len(core.teams(core.parse("a\nb"), 5, 1)) == 2)
+    check("순서: 모두 한 번씩", sorted(core.order(core.parse("a\nb\nc"), 3)) == ["a", "b", "c"])
+    check("숫자 중복 없이 (범위보다 많이 달라면 범위만큼)",
+          sorted(core.roll("number", 1, 10, lo=1, hi=3, unique=True)) == [1, 2, 3])
+    check("주사위 요약", core.summary("dice", ["주사위 2d6", [3, 4]]) == "주사위 2d6: 3, 4 (합 7)")
+
+
+LADDER_NAMES = ["레이무", "마리사", "사나에", "치르노", "사쿠야"]
+
+
+def t_ladder() -> None:
+    win.set_mode("ladder")
+    win.editor.setPlainText("\n".join(LADDER_NAMES))
+    win.ladder_text.setPlainText("당첨\n커피")
+    lad = win.stage.ladder
+    check("사다리 미리보기 (이름 · 결과 칸)", lad.top == LADDER_NAMES and lad.bottom == ["당첨", "커피", "꽝", "꽝", "꽝"]
+          and lad.ladder is None)
+    win.act()
+    check("사다리 시작", lad.busy and "바로 결과" in win.go.text(), win.go.text())
+
+
+def t_ladder2() -> None:
+    d = store.history[0]
+    ok = d.mode == "ladder" and len(d.result) == 5
+    check("사다리 기록 (5명, 결과 1:1)", ok and [a for a, _ in d.result] == LADDER_NAMES
+          and sorted(b for _, b in d.result) == sorted(["당첨", "커피", "꽝", "꽝", "꽝"]), d.result)
+    if ok:
+        lad = core.ladder(5, d.seed)
+        bottom = core.ladder_results("당첨\n커피", 5)
+        check("시드로 다시 해 봐도 같은 사다리", [[LADDER_NAMES[s], bottom[lad.end_of(s)]] for s in range(5)] == d.result)
+    check("끝나면 버튼이 돌아옴", not win.busy and "기적을 일으키기" in win.go.text())
+    n = len(store.history)
+    win.act()
+    win.act()                                              # 진행 중에 한 번 더 → 바로 결과
+    check("진행 중 누르면 바로 결과", not win.stage.ladder.busy and len(store.history) == n + 1
+          and len(win.stage.ladder.done_starts) == 5)
+
+
+def t_teams() -> None:
+    win.set_mode("teams")
+    win.editor.setPlainText("\n".join(f"멤버{i}" for i in range(1, 12)))
+    win.teams_count.setValue(3)
+    win.teams_style.setCurrentIndex(1)
+    check("팀 미리보기 (카드 3개)", len(win.stage.teams.teams) == 3)
+    win.act()
+
+
+def t_teams2() -> None:
+    d = store.history[0]
+    sizes = sorted(len(m) for _, m in d.result)
+    check("팀 나누기 기록 (3팀 · 4·4·3명 · 중복 없음)", d.mode == "teams" and sizes == [3, 4, 4]
+          and len({x for _, m in d.result for x in m}) == 11, d.result)
+    check("동방 세력 팀 이름", all(t.endswith(" 팀") and t[:-2] in core.TEAM_NAMES["touhou"] for t, _ in d.result))
+    again = [[t, list(m)] for t, m in core.teams(core.parse(d.text), 3, d.seed, "touhou")]
+    check("시드로 다시 해 봐도 같은 팀", again == d.result)
+
+
+def t_order() -> None:
+    win.set_mode("order")
+    win.editor.setPlainText("A\nB\nC\nD")
+    win.act()
+
+
+def t_order2() -> None:
+    d = store.history[0]
+    check("순서 정하기 기록", d.mode == "order" and sorted(d.result) == ["A", "B", "C", "D"], d.result)
+    check("시드로 다시 해 봐도 같은 순서", core.order(core.parse(d.text), d.seed) == d.result)
+
+
+def t_dice() -> None:
+    win.set_mode("dice")
+    win.dice_kind.setCurrentIndex(0)
+    win.dice_count.setValue(3)
+    win.dice_sides.setCurrentIndex(core.DICE_SIDES.index(6))
+    check("주사위 옵션 (면 보이고 숫자 범위 숨김)", win.dice_sides.isVisibleTo(win) and not win.num_row.isVisibleTo(win))
+    win.act()
+
+
+def t_dice2() -> None:
+    d = store.history[0]
+    label, values = d.result
+    check("주사위 3d6", d.mode == "dice" and label == "주사위 3d6" and len(values) == 3
+          and all(1 <= v <= 6 for v in values), d.result)
+    check("시드로 다시 해 봐도 같은 눈", core.roll("dice", d.seed, 3, 6) == values)
+    check("합계 표시", "합" in win.result.text())
+    win.dice_kind.setCurrentIndex(1)
+    win.dice_count.setValue(1)
+    win.act()
+
+
+def t_dice3() -> None:
+    d = store.history[0]
+    check("동전 던지기", d.result[1][0] in ("앞", "뒤") and d.result[0] == "동전 1개", d.result)
+    win.dice_kind.setCurrentIndex(2)
+    check("숫자 옵션 (범위 보이고 면 숨김)", win.num_row.isVisibleTo(win) and not win.dice_sides.isVisibleTo(win))
+    win.dice_count.setValue(5)
+    win.num_lo.setValue(1)
+    win.num_hi.setValue(5)
+    win.num_unique.setChecked(True)
+    win.act()
+
+
+def t_dice4() -> None:
+    d = store.history[0]
+    check("숫자 1~5 다섯 개 (중복 없이)", sorted(d.result[1]) == [1, 2, 3, 4, 5], d.result)
+    check("기록 탭 아이콘", "🎲" in win.hist.item(0).text())
+    win.hist.setCurrentRow(0)
+    win._copy_result()
+    check("주사위 결과 복사", "숫자 1~5" in QGuiApplication.clipboard().text())
+    win._save_settings()
+    s2 = mstore.Store()
+    check("새 옵션 저장", s2.settings.dice_kind == "number" and s2.settings.teams_count == 3
+          and s2.settings.teams_style == "touhou" and s2.settings.ladder_results == "당첨\n커피")
+
+
 def t_end() -> None:
     app.quit()
 
 
-STEPS = [(t_core, 10), (t_wheel, 700), (t_wheel2, 50), (t_raffle, 300), (t_raffle2, 1500), (t_raffle3, 1600),
-         (t_raffle4, 50), (t_lists, 50), (t_persist, 50), (t_end, 0)]
+STEPS = [(t_core, 10), (t_core2, 10), (t_wheel, 700), (t_wheel2, 50), (t_raffle, 300), (t_raffle2, 1500),
+         (t_raffle3, 1600), (t_raffle4, 50), (t_lists, 50), (t_persist, 50),
+         (t_ladder, 900), (t_ladder2, 300), (t_teams, 700), (t_teams2, 50), (t_order, 600), (t_order2, 50),
+         (t_dice, 400), (t_dice2, 400), (t_dice3, 400), (t_dice4, 50), (t_end, 0)]
 
 
 def run(i: int = 0) -> None:

@@ -47,6 +47,15 @@ class Settings:
     exclude_last: bool = False
     auto_reveal: bool = False
     tiers: list = field(default_factory=lambda: [["당첨", 3]])
+    ladder_results: str = "당첨"
+    teams_count: int = 2
+    teams_style: str = "number"
+    dice_kind: str = "dice"
+    dice_count: int = 1
+    dice_sides: int = 6
+    num_lo: int = 1
+    num_hi: int = 100
+    num_unique: bool = True
     geometry: str = ""
 
 
@@ -106,8 +115,8 @@ class Store:
             w = csv.writer(f)
             w.writerow(["시각", "종류", "목록", "항목 수", "시드", "목록 지문", "결과"])
             for d in self.history:
-                from .core import seed_text, summary
-                w.writerow([d.when, "룰렛" if d.mode == "wheel" else "당첨자 뽑기", d.title, d.count,
+                from .core import MODE_NAMES, seed_text, summary
+                w.writerow([d.when, MODE_NAMES.get(d.mode, d.mode), d.title, d.count,
                             seed_text(d.seed), d.print_, summary(d.mode, d.result)])
 
     # ── 설정 ──

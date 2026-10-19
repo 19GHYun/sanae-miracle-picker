@@ -119,8 +119,144 @@ def reveal_order(results: list[tuple[str, list[str]]]) -> list[tuple[str, str]]:
     return [(tier, name) for tier, names in reversed(results) for name in names]
 
 
+# ── 순서 정하기 · 팀 나누기 · 사다리 · 주사위 (가중치는 쓰지 않음: 한 줄 = 한 명) ──
+TEAM_NAMES = {
+    "number": [],                                      # 1팀, 2팀 …
+    "touhou": ["하쿠레이", "모리야", "홍마관", "영원정", "백옥루", "지령전", "명련사", "신령묘",
+               "요괴의 산", "마법의 숲", "인간 마을", "휘침성"],
+    "color": ["빨강", "파랑", "초록", "노랑", "보라", "주황", "하늘", "분홍", "하양", "검정", "회색", "갈색"],
+}
+LADDER_MAX = 20
+DICE_SIDES = (4, 6, 8, 10, 12, 20, 100)
+
+
+def names_of(entries: list[Entry]) -> list[str]:
+    return [e.name for e in entries]
+
+
+def order(entries: list[Entry], seed: int) -> list[str]:
+    """순서 정하기: 섞은 순서 (1번부터)."""
+    names = names_of(entries)
+    random.Random(seed).shuffle(names)
+    return names
+
+
+def team_names(n: int, style: str = "number") -> list[str]:
+    pool = TEAM_NAMES.get(style) or []
+    return [f"{pool[i]} 팀" if i < len(pool) else f"{i + 1}팀" for i in range(n)]
+
+
+def teams(entries: list[Entry], n: int, seed: int, style: str = "number") -> list[tuple[str, list[str]]]:
+    """팀 나누기: 섞어서 차례로 나눠 줌 → 팀 인원 차이는 많아야 1명. (세력·색 이름이면 이름도 섞임)"""
+    rng = random.Random(seed)
+    names = names_of(entries)
+    rng.shuffle(names)
+    n = max(1, min(n, len(names) or 1))
+    labels = team_names(n, style)
+    if style != "number":
+        rng.shuffle(labels)
+    out: list[tuple[str, list[str]]] = [(label, []) for label in labels]
+    for i, name in enumerate(names):
+        out[i % n][1].append(name)
+    return out
+
+
+@dataclass(frozen=True)
+class Ladder:
+    n: int
+    rows: int
+    rungs: tuple[tuple[int, int], ...]     # (줄 번호, 왼쪽 세로줄 번호) — 그 줄에서 c 와 c+1 을 잇는 가로줄
+
+    def trace(self, start: int) -> list[tuple[int, int]]:
+        """start 세로줄에서 내려가는 길: [(줄, 세로줄)] — 가로줄을 만나면 옆으로 건너감."""
+        at = set(self.rungs)
+        col, path = start, [(-1, start)]
+        for r in range(self.rows):
+            if (r, col) in at:
+                path.append((r, col))
+                col += 1
+            elif (r, col - 1) in at:
+                path.append((r, col))
+                col -= 1
+            path.append((r, col))
+        path.append((self.rows, col))
+        return path
+
+    def end_of(self, start: int) -> int:
+        return self.trace(start)[-1][1]
+
+
+def ladder(n: int, seed: int, rows: int = 0) -> Ladder:
+    """사다리: 줄마다 이웃한 가로줄이 붙지 않게 무작위로 놓고, 가로줄이 하나도 없는 칸은 없게."""
+    rng = random.Random(seed)
+    rows = rows or max(8, min(16, n * 2 + 4))
+    rungs: list[tuple[int, int]] = []
+    for r in range(rows):
+        c = 0
+        while c < n - 1:
+            if rng.random() < 0.42:
+                rungs.append((r, c))
+                c += 2                                # 같은 줄 바로 옆 칸엔 안 놓음
+            else:
+                c += 1
+    for _ in range(3):                                # 가로줄이 하나도 없는 칸엔 하나씩 (자리가 없으면 옆을 비켜서)
+        for c in range(n - 1):
+            if any(cc == c for _, cc in rungs):
+                continue
+            free = [r for r in range(rows) if (r, c - 1) not in rungs and (r, c + 1) not in rungs]
+            r = rng.choice(free) if free else rng.randrange(rows)
+            rungs = [(rr, cc) for rr, cc in rungs if not (rr == r and cc in (c - 1, c + 1))]
+            rungs.append((r, c))
+    return Ladder(n, rows, tuple(sorted(set(rungs))))
+
+
+def ladder_results(results_text: str, n: int) -> list[str]:
+    """사다리 아래 칸: 적은 결과를 n 칸에 맞춤 (모자라면 '꽝', 넘치면 자름). 비어 있으면 당첨 1 + 꽝."""
+    got = [e.name for e in parse(results_text)][:n]
+    if not got:
+        got = ["당첨"]
+    return got + ["꽝"] * (n - len(got))
+
+
+def roll(kind: str, seed: int, count: int = 1, sides: int = 6, lo: int = 1, hi: int = 100,
+         unique: bool = False) -> list:
+    """주사위(dice) / 동전(coin) / 숫자(number)."""
+    rng = random.Random(seed)
+    count = max(1, count)
+    if kind == "coin":
+        return [rng.choice(["앞", "뒤"]) for _ in range(count)]
+    if kind == "number":
+        lo, hi = min(lo, hi), max(lo, hi)
+        if unique:
+            return rng.sample(range(lo, hi + 1), min(count, hi - lo + 1))
+        return [rng.randint(lo, hi) for _ in range(count)]
+    return [rng.randint(1, sides) for _ in range(count)]
+
+
+def dice_label(kind: str, count: int, sides: int, lo: int, hi: int) -> str:
+    if kind == "coin":
+        return f"동전 {count}개"
+    if kind == "number":
+        return f"숫자 {min(lo, hi)}~{max(lo, hi)} · {count}개"
+    return f"주사위 {count}d{sides}"
+
+
+MODE_NAMES = {"wheel": "룰렛", "raffle": "당첨자 뽑기", "ladder": "사다리", "teams": "팀 나누기",
+              "order": "순서 정하기", "dice": "주사위"}
+
+
 def summary(mode: str, result) -> str:
     if mode == "wheel":
         return str(result[0]) if result else "-"
+    if mode == "order":
+        return " → ".join(f"{i + 1}.{n}" for i, n in enumerate(result))
+    if mode == "ladder":
+        return ", ".join(f"{a}→{b}" for a, b in result)
+    if mode == "dice":
+        label, values = result[0], result[1]
+        text = ", ".join(str(v) for v in values)
+        if label.startswith("주사위") and len(values) > 1:
+            text += f" (합 {sum(values)})"
+        return f"{label}: {text}"
     parts = [f"{tier} {', '.join(names) if names else '없음'}" for tier, names in result]
     return " / ".join(parts)
