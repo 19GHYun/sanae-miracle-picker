@@ -21,9 +21,10 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
                                QMessageBox, QPlainTextEdit, QPushButton, QSpinBox, QStackedWidget, QTabWidget,
                                QVBoxLayout, QWidget)
 
-from . import __version__, core, sound
+from . import __version__, core, i18n, presets, sound
 from .cutin import MiracleCutIn
 from .dice import DiceStage
+from .gacha import GachaStage
 from .ladder import LadderStage, is_blank
 from .lineup import OrderStage, TeamsStage
 from .raffle import RaffleStage
@@ -31,17 +32,18 @@ from .sanae import IDLE_LINES, SPIN_LINES, SanaeWidget, Sprites
 from .store import Draw, Store, data_dir, now_text
 from .stream import BACKGROUNDS, BG_COLORS, HOTKEYS, Hotkey, StreamWindow, obs_dir, write_obs
 from .wheel import WheelWidget
+from .i18n import T
 
 log = logging.getLogger("Miracle")
-TITLE = "사나에의 기적 추첨기"
+TITLE = T("사나에의 기적 추첨기")
 SPEED = float(os.environ.get("MIRACLE_SPEED") or 1.0)
 WHEEL_SECONDS = 5.5
-MODES = (("wheel", "🎡 룰렛"), ("raffle", "🎫 당첨자 뽑기"), ("ladder", "🔀 사다리"), ("teams", "👥 팀 나누기"),
-         ("order", "🔢 순서 정하기"), ("dice", "🎲 주사위"))
+MODES = (("wheel", T("🎡 룰렛")), ("raffle", T("🎫 당첨자 뽑기")), ("ladder", T("🔀 사다리")), ("teams", T("👥 팀 나누기")),
+         ("order", T("🔢 순서 정하기")), ("dice", T("🎲 주사위")), ("gacha", T("🃏 가챠")))
 MODE_KEYS = [k for k, _ in MODES]
-MODE_ICONS = {"wheel": "🎡", "raffle": "🎫", "ladder": "🔀", "teams": "👥", "order": "🔢", "dice": "🎲"}
-TEAM_STYLES = (("number", "1팀 · 2팀 …"), ("touhou", "동방 세력 (하쿠레이 · 모리야 …)"), ("color", "색깔 (빨강 · 파랑 …)"))
-DICE_KINDS = (("dice", "주사위"), ("coin", "동전 던지기"), ("number", "숫자 뽑기"))
+MODE_ICONS = {"wheel": "🎡", "raffle": "🎫", "ladder": "🔀", "teams": "👥", "order": "🔢", "dice": "🎲", "gacha": "🃏"}
+TEAM_STYLES = (("number", T("1팀 · 2팀 …")), ("touhou", T("동방 세력 (하쿠레이 · 모리야 …)")), ("color", T("색깔 (빨강 · 파랑 …)")))
+DICE_KINDS = (("dice", T("주사위")), ("coin", T("동전 던지기")), ("number", T("숫자 뽑기")))
 STYLE = """
 QWidget#root { background: #F2FAF4; }
 QLabel { font-family: 'Malgun Gothic'; color: #22352A; }
@@ -67,7 +69,8 @@ QPlainTextEdit, QListWidget, QLineEdit, QSpinBox, QComboBox { background: #FBFEF
 QListWidget::item { padding: 4px 2px; border-bottom: 1px solid #EEF6F0; }
 QListWidget::item:selected { background: #DFF2E5; color: #22352A; }
 QCheckBox { font-family: 'Malgun Gothic'; font-size: 12px; color: #22352A; }
-"""
+QComboBox#lang { font-size: 12px; padding: 1px 4px; margin: 0 2px 4px 0; }
+""".replace("Malgun Gothic", i18n.font())                      # 언어마다 글꼴
 
 
 def app_icon() -> QIcon:
@@ -112,8 +115,9 @@ class Stage(QWidget):
         self.teams = TeamsStage(self)
         self.order = OrderStage(self)
         self.dice = DiceStage(self)
+        self.gacha = GachaStage(self)
         self.boards = {"wheel": self.wheel, "raffle": self.raffle, "ladder": self.ladder, "teams": self.teams,
-                       "order": self.order, "dice": self.dice}
+                       "order": self.order, "dice": self.dice, "gacha": self.gacha}
         self.sanae = SanaeWidget(self)
         self.cutin = MiracleCutIn(self)
         self.mode = "wheel"
@@ -191,6 +195,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.store = store
         s = store.settings
+        if store.fresh and not s.text:                           # 처음 켬: 그 언어의 점심 메뉴 · 기본 글자
+            name = list(presets.presets(i18n.lang()))[2]
+            s.list_name, s.text = name, presets.presets(i18n.lang())[name]
+            s.tiers, s.ladder_results = [[T("당첨"), 3]], T("당첨")
         self.mode = s.mode if s.mode in dict(MODES) else "wheel"
         self._programmatic = False
         self._pending: tuple | None = None
@@ -222,7 +230,7 @@ class MainWindow(QMainWindow):
         left.addWidget(self.stage, 1)
         self.left = left
         self.stream_win: StreamWindow | None = None
-        self.stage_placeholder = QLabel("📺 방송 창에서 무대를 보여 주는 중이에요\n방송 창을 닫으면 여기로 돌아와요",
+        self.stage_placeholder = QLabel(T("📺 방송 창에서 무대를 보여 주는 중이에요\n방송 창을 닫으면 여기로 돌아와요"),
                                         objectName="hint")
         self.stage_placeholder.setAlignment(Qt.AlignCenter)
         self.stage_placeholder.hide()
@@ -237,9 +245,16 @@ class MainWindow(QMainWindow):
         left.addWidget(self.result)
         self.tabs = QTabWidget(objectName="side")
         self.tabs.setFixedWidth(350)
-        self.tabs.addTab(self._list_tab(), "📝 목록")
-        self.tabs.addTab(self._history_tab(), "📜 기록")
-        self.tabs.addTab(self._stream_tab(), "📺 방송")
+        self.tabs.addTab(self._list_tab(), T("📝 목록"))
+        self.tabs.addTab(self._history_tab(), T("📜 기록"))
+        self.tabs.addTab(self._stream_tab(), T("📺 방송"))
+        self.lang_box = QComboBox(objectName="lang")              # 언어: 탭 줄 오른쪽 끝
+        for key, label in i18n.LANGS:
+            self.lang_box.addItem("🌐 " + (T(label) if key == "auto" else label), key)
+        self.lang_box.setCurrentIndex([k for k, _ in i18n.LANGS].index(s.lang) if s.lang in dict(i18n.LANGS) else 0)
+        self.lang_box.setToolTip(T("언어 (자동 = 시스템 언어 · 바꾸면 다시 시작해요)"))
+        self.lang_box.activated.connect(self._lang_changed)
+        self.tabs.setCornerWidget(self.lang_box, Qt.TopRightCorner)
         h.addWidget(self.tabs)
         for keys in (Qt.Key_Space, "Ctrl+Return", "F5"):
             QShortcut(QKeySequence(keys), self, activated=self.act)
@@ -256,7 +271,7 @@ class MainWindow(QMainWindow):
         self.set_mode(self.mode)
         self._text_changed()
         self._refresh_history()
-        self.result.setText("오른쪽에 목록을 적고 <b>✨ 기적을 일으키기!</b> (또는 Space)")
+        self.result.setText(T("오른쪽에 목록을 적고 <b>✨ 기적을 일으키기!</b> (또는 Space)"))
         self.stage.sanae.say(random.choice(IDLE_LINES), 4.0)
 
     # ── 오른쪽: 목록 ──
@@ -268,11 +283,11 @@ class MainWindow(QMainWindow):
         v.setSpacing(7)
         row = QHBoxLayout()
         self.list_box = QComboBox()
-        self.list_box.setToolTip("저장해 둔 목록")
+        self.list_box.setToolTip(T("저장해 둔 목록"))
         self.list_box.activated.connect(lambda _i: self._load_list(self.list_box.currentText()))
         row.addWidget(self.list_box, 1)
-        for text, tip, fn in (("💾", "이 이름으로 저장 (덮어쓰기)", self._save_list), ("＋", "새 이름으로 저장", self._save_as),
-                              ("✕", "이 목록 지우기", self._delete_list)):
+        for text, tip, fn in (("💾", T("이 이름으로 저장 (덮어쓰기)"), self._save_list), ("＋", T("새 이름으로 저장"), self._save_as),
+                              ("✕", T("이 목록 지우기"), self._delete_list)):
             b = QPushButton(text, objectName="small")
             b.setToolTip(tip)
             b.setCursor(Qt.PointingHandCursor)
@@ -281,15 +296,15 @@ class MainWindow(QMainWindow):
         v.addLayout(row)
         self._fill_lists(s.list_name)
         self.editor = QPlainTextEdit()
-        self.editor.setPlaceholderText("한 줄에 하나씩 적어 주세요\n\n사나에\n레이무 x2   ← 두 배로 잘 뽑혀요\n마리사\n\n"
-                                       "엑셀에서 복사해 붙여도 되고,\n한 줄에 쉼표로 적어도 돼요 (짜장, 짬뽕, 볶음밥)")
+        self.editor.setPlaceholderText(T("한 줄에 하나씩 적어 주세요\n\n사나에\n레이무 x2   ← 두 배로 잘 뽑혀요\n마리사\n\n"
+                                       "엑셀에서 복사해 붙여도 되고,\n한 줄에 쉼표로 적어도 돼요 (짜장, 짬뽕, 볶음밥)"))
         self.editor.setPlainText(s.text)
         self.editor.textChanged.connect(self._text_changed)
         v.addWidget(self.editor, 1)
         self.count = QLabel(objectName="hint")
         v.addWidget(self.count)
         tools = QHBoxLayout()
-        for text, fn in (("🔀 섞기", self._shuffle), ("가나다순", self._sort), ("중복 제거", self._dedupe)):
+        for text, fn in ((T("🔀 섞기"), self._shuffle), (T("가나다순"), self._sort), (T("중복 제거"), self._dedupe)):
             b = QPushButton(text, objectName="small")
             b.setCursor(Qt.PointingHandCursor)
             b.clicked.connect(fn)
@@ -300,7 +315,7 @@ class MainWindow(QMainWindow):
         wheel_opts = QWidget()
         wv = QVBoxLayout(wheel_opts)
         wv.setContentsMargins(0, 6, 0, 0)
-        self.remove_winner = QCheckBox("뽑힌 항목은 목록에서 빼기")
+        self.remove_winner = QCheckBox(T("뽑힌 항목은 목록에서 빼기"))
         self.remove_winner.setChecked(s.remove_winner)
         self.remove_winner.toggled.connect(self._queue_save)
         wv.addWidget(self.remove_winner)
@@ -309,8 +324,9 @@ class MainWindow(QMainWindow):
         self.opts.addWidget(self._raffle_opts())
         self.opts.addWidget(self._ladder_opts())
         self.opts.addWidget(self._teams_opts())
-        self.opts.addWidget(self._hint_opts("목록을 섞어서 1번부터 한 명씩 불러 줘요.\n발표 순서 · 게임 차례 · 청소 당번 정하기에."))
+        self.opts.addWidget(self._hint_opts(T("목록을 섞어서 1번부터 한 명씩 불러 줘요.\n발표 순서 · 게임 차례 · 청소 당번 정하기에.")))
         self.opts.addWidget(self._dice_opts())
+        self.opts.addWidget(self._gacha_opts())
         v.addWidget(self.opts)
         return w
 
@@ -320,22 +336,22 @@ class MainWindow(QMainWindow):
         v = QVBoxLayout(w)
         v.setContentsMargins(0, 6, 0, 0)
         v.setSpacing(5)
-        v.addWidget(QLabel("<b>등수</b>  (위에서부터 1등 · 발표는 아래 등수부터)"))
+        v.addWidget(QLabel(T("<b>등수</b>  (위에서부터 1등 · 발표는 아래 등수부터)")))
         self.tier_box = QVBoxLayout()
         self.tier_box.setSpacing(4)
         v.addLayout(self.tier_box)
         self.tier_rows: list[tuple[QWidget, QLineEdit, QSpinBox]] = []
-        for name, count in s.tiers or [["당첨", 1]]:
+        for name, count in s.tiers or [[T("당첨"), 1]]:
             self._add_tier(name, count)
-        add = QPushButton("＋ 등수 추가", objectName="small")
+        add = QPushButton(T("＋ 등수 추가"), objectName="small")
         add.setCursor(Qt.PointingHandCursor)
-        add.clicked.connect(lambda: (self._add_tier(f"{len(self.tier_rows) + 1}등", 1), self._queue_save()))
+        add.clicked.connect(lambda: (self._add_tier(T("{v0}등", v0=len(self.tier_rows) + 1), 1), self._queue_save()))
         v.addWidget(add, 0, Qt.AlignLeft)
-        self.unique = QCheckBox("한 사람은 한 번만 당첨")
+        self.unique = QCheckBox(T("한 사람은 한 번만 당첨"))
         self.unique.setChecked(s.unique)
-        self.exclude_last = QCheckBox("직전 추첨 당첨자는 빼고 뽑기")
+        self.exclude_last = QCheckBox(T("직전 추첨 당첨자는 빼고 뽑기"))
         self.exclude_last.setChecked(s.exclude_last)
-        self.auto = QCheckBox("자동으로 계속 발표 (끄면 한 명씩 버튼으로)")
+        self.auto = QCheckBox(T("자동으로 계속 발표 (끄면 한 명씩 버튼으로)"))
         self.auto.setChecked(s.auto_reveal)
         for c in (self.unique, self.exclude_last, self.auto):
             c.toggled.connect(self._queue_save)
@@ -358,14 +374,14 @@ class MainWindow(QMainWindow):
         v = QVBoxLayout(w)
         v.setContentsMargins(0, 6, 0, 0)
         v.setSpacing(5)
-        v.addWidget(QLabel("<b>아래 칸 결과</b>  (한 줄에 하나 · 모자라면 '꽝')"))
+        v.addWidget(QLabel(T("<b>아래 칸 결과</b>  (한 줄에 하나 · 모자라면 '꽝')")))
         self.ladder_text = QPlainTextEdit()
         self.ladder_text.setPlainText(s.ladder_results)
-        self.ladder_text.setPlaceholderText("당첨\n커피 쏘기\n(비워 두면 당첨 하나 + 나머지 꽝)")
+        self.ladder_text.setPlaceholderText(T("당첨\n커피 쏘기\n(비워 두면 당첨 하나 + 나머지 꽝)"))
         self.ladder_text.setFixedHeight(96)
         self.ladder_text.textChanged.connect(self._options_changed)
         v.addWidget(self.ladder_text)
-        tip = QLabel(f"참가자는 목록에서 (2~{core.LADDER_MAX}명). 진행 중에 버튼을 누르면 남은 사람을 한꺼번에 공개해요.",
+        tip = QLabel(T("참가자는 목록에서 (2~{LADDER_MAX}명). 진행 중에 버튼을 누르면 남은 사람을 한꺼번에 공개해요.", LADDER_MAX=core.LADDER_MAX),
                      objectName="hint")
         tip.setWordWrap(True)
         v.addWidget(tip)
@@ -378,11 +394,11 @@ class MainWindow(QMainWindow):
         v.setContentsMargins(0, 6, 0, 0)
         v.setSpacing(5)
         row = QHBoxLayout()
-        row.addWidget(QLabel("<b>팀 수</b>"))
+        row.addWidget(QLabel(T("<b>팀 수</b>")))
         self.teams_count = QSpinBox()
         self.teams_count.setRange(2, 12)
         self.teams_count.setValue(max(2, min(12, s.teams_count)))
-        self.teams_count.setSuffix(" 팀")
+        self.teams_count.setSuffix(T(" 팀"))
         self.teams_count.valueChanged.connect(self._options_changed)
         row.addWidget(self.teams_count)
         row.addStretch(1)
@@ -394,7 +410,7 @@ class MainWindow(QMainWindow):
                                              if s.teams_style in dict(TEAM_STYLES) else 0))
         self.teams_style.currentIndexChanged.connect(self._options_changed)
         v.addWidget(self.teams_style)
-        tip = QLabel("섞어서 차례로 나눠 줘서 팀 인원 차이는 많아야 1명이에요.", objectName="hint")
+        tip = QLabel(T("섞어서 차례로 나눠 줘서 팀 인원 차이는 많아야 1명이에요."), objectName="hint")
         tip.setWordWrap(True)
         v.addWidget(tip)
         return w
@@ -412,13 +428,13 @@ class MainWindow(QMainWindow):
         self.dice_kind.currentIndexChanged.connect(self._options_changed)
         v.addWidget(self.dice_kind)
         row = QHBoxLayout()
-        row.addWidget(QLabel("개수"))
+        row.addWidget(QLabel(T("개수")))
         self.dice_count = QSpinBox()
         self.dice_count.setRange(1, 10)
         self.dice_count.setValue(max(1, min(10, s.dice_count)))
         self.dice_count.valueChanged.connect(self._options_changed)
         row.addWidget(self.dice_count)
-        self.dice_sides_label = QLabel("면")
+        self.dice_sides_label = QLabel(T("면"))
         row.addWidget(self.dice_sides_label)
         self.dice_sides = QComboBox()
         for n in core.DICE_SIDES:
@@ -441,13 +457,49 @@ class MainWindow(QMainWindow):
         nr.addWidget(self.num_hi)
         nr.addStretch(1)
         v.addWidget(self.num_row)
-        self.num_unique = QCheckBox("같은 숫자는 한 번만")
+        self.num_unique = QCheckBox(T("같은 숫자는 한 번만"))
         self.num_unique.setChecked(s.num_unique)
         self.num_unique.toggled.connect(self._options_changed)
         v.addWidget(self.num_unique)
-        tip = QLabel("주사위 모드는 목록을 쓰지 않아요.", objectName="hint")
+        tip = QLabel(T("주사위 모드는 목록을 쓰지 않아요."), objectName="hint")
         v.addWidget(tip)
         return w
+
+    def _gacha_opts(self) -> QWidget:
+        s = self.store.settings
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(0, 6, 0, 0)
+        v.setSpacing(5)
+        row = QHBoxLayout()
+        row.addWidget(QLabel(T("<b>뽑기</b>")))
+        self.gacha_pulls = QSpinBox()
+        self.gacha_pulls.setRange(1, 10)
+        self.gacha_pulls.setValue(max(1, min(10, s.gacha_pulls)))
+        self.gacha_pulls.setSuffix(T(" 장"))
+        self.gacha_pulls.valueChanged.connect(self._options_changed)
+        row.addWidget(self.gacha_pulls)
+        sample = QPushButton(T("예시 넣기"), objectName="small")
+        sample.setCursor(Qt.PointingHandCursor)
+        sample.clicked.connect(self._gacha_sample)
+        row.addStretch(1)
+        row.addWidget(sample)
+        v.addLayout(row)
+        self.gacha_guarantee = QCheckBox(T("10연은 마지막 장이 한 등급 위 확정"))
+        self.gacha_guarantee.setChecked(s.gacha_guarantee)
+        self.gacha_guarantee.setToolTip(T("10장 모두 가장 흔한 등급이면 마지막 장은 그보다 위 등급이 나와요"))
+        self.gacha_guarantee.toggled.connect(self._queue_save)
+        v.addWidget(self.gacha_guarantee)
+        tip = QLabel(T("목록에 [SSR 3] 처럼 등급과 확률(%)을 적고, 그 아래에 그 등급의 항목을 적어요. "
+                     "위에 적은 등급일수록 귀해요."), objectName="hint")
+        tip.setWordWrap(True)
+        v.addWidget(tip)
+        return w
+
+    def _gacha_sample(self) -> None:
+        name = list(presets.presets(i18n.lang()))[4]
+        self._load_list(name)
+        self._fill_lists(name)
 
     def _dice_spec(self) -> tuple[str, int, int, int, int, bool]:
         return (self.dice_kind.currentData(), self.dice_count.value(), self.dice_sides.currentData(),
@@ -474,6 +526,8 @@ class MainWindow(QMainWindow):
         elif self.mode == "dice":
             kind, count, sides, lo, hi, _u = self._dice_spec()
             self.stage.dice.preview(kind, count, sides, lo, hi)
+        elif self.mode == "gacha":
+            self.stage.gacha.preview(self.gacha_pulls.value())
 
     def _add_tier(self, name: str, count: int) -> None:
         roww = QWidget()
@@ -484,10 +538,10 @@ class MainWindow(QMainWindow):
         spin = QSpinBox()
         spin.setRange(0, 999)
         spin.setValue(int(count))
-        spin.setSuffix(" 명")
+        spin.setSuffix(T(" 명"))
         rm = QPushButton("✕", objectName="small")
         rm.setCursor(Qt.PointingHandCursor)
-        rm.setToolTip("이 등수 빼기")
+        rm.setToolTip(T("이 등수 빼기"))
         entry = (roww, edit, spin)
         rm.clicked.connect(lambda: self._remove_tier(entry))
         edit.textChanged.connect(self._queue_save)
@@ -508,7 +562,7 @@ class MainWindow(QMainWindow):
     def tiers(self) -> list[core.Tier]:
         out = []
         for i, (_, edit, spin) in enumerate(self.tier_rows):
-            name = edit.text().strip() or f"{i + 1}등"
+            name = edit.text().strip() or T("{v0}등", v0=i + 1)
             if spin.value() > 0:
                 out.append(core.Tier(name, spin.value()))
         return out
@@ -522,14 +576,14 @@ class MainWindow(QMainWindow):
         self.hist.setWordWrap(True)
         v.addWidget(self.hist, 1)
         row = QHBoxLayout()
-        for text, fn in (("📋 결과 복사", self._copy_result), ("💾 CSV 저장", self._export_csv), ("기록 지우기", self._clear_history)):
+        for text, fn in ((T("📋 결과 복사"), self._copy_result), (T("💾 CSV 저장"), self._export_csv), (T("기록 지우기"), self._clear_history)):
             b = QPushButton(text, objectName="small")
             b.setCursor(Qt.PointingHandCursor)
             b.clicked.connect(fn)
             row.addWidget(b)
         v.addLayout(row)
-        tip = QLabel("모든 추첨은 시드로 정해져요. 같은 목록·같은 시드면 언제 다시 해도 같은 결과예요 "
-                     "(목록 지문으로 같은 목록이었는지 확인).", objectName="hint")
+        tip = QLabel(T("모든 추첨은 시드로 정해져요. 같은 목록·같은 시드면 언제 다시 해도 같은 결과예요 "
+                     "(목록 지문으로 같은 목록이었는지 확인)."), objectName="hint")
         tip.setWordWrap(True)
         v.addWidget(tip)
         return w
@@ -538,26 +592,27 @@ class MainWindow(QMainWindow):
         self.hist.clear()
         for d in self.store.history[:200]:
             icon = MODE_ICONS.get(d.mode, "✨")
-            item = QListWidgetItem(f"{d.when[5:16].replace('T', ' ')}  {icon} {d.title}  ({d.count}개)\n"
-                                   f"→ {core.summary(d.mode, d.result)}\n   시드 {core.seed_text(d.seed)} · 지문 {d.print_}")
+            item = QListWidgetItem(T("{v0}  {icon} {title}  ({count}개)\n→ {v8}\n   시드 {v10} · 지문 {print_}", v0=d.when[5:16].replace('T', ' '), icon=icon, title=d.title, count=d.count, v8=core.summary(d.mode, d.result), v10=core.seed_text(d.seed), print_=d.print_))
             item.setData(Qt.UserRole, d)
             self.hist.addItem(item)
 
     def draw_text(self, d: Draw) -> str:
-        kind = core.MODE_NAMES.get(d.mode, d.mode)
+        kind = core.mode_name(d.mode)
         lines = [f"[{TITLE}] {d.when.replace('T', ' ')}",
-                 f"{kind} · {d.title}" if d.mode == "dice" else f"{kind} · 목록: {d.title} ({d.count}개)"]
+                 f"{kind} · {d.title}" if d.mode == "dice" else T("{kind} · 목록: {title} ({count}개)", kind=kind, title=d.title, count=d.count)]
         if d.mode == "wheel":
-            lines.append(f"결과: {d.result[0]}")
+            lines.append(T("결과: {v1}", v1=d.result[0]))
         elif d.mode == "order":
             lines += [f"{i + 1}. {n}" for i, n in enumerate(d.result)]
         elif d.mode == "ladder":
             lines += [f"{a} → {b}" for a, b in d.result]
         elif d.mode == "dice":
             lines.append(core.summary("dice", d.result))
+        elif d.mode == "gacha":
+            lines += [f"{i + 1}. [{r}] {item}" for i, (r, item) in enumerate(d.result[1])]
         else:
-            lines += [f"{tier}: {', '.join(names) if names else '없음'}" for tier, names in d.result]
-        lines.append(f"시드 {core.seed_text(d.seed)} · 목록 지문 {d.print_}")
+            lines += [f"{tier}: {', '.join(names) if names else T('없음')}" for tier, names in d.result]
+        lines.append(T("시드 {v1} · 목록 지문 {print_}", v1=core.seed_text(d.seed), print_=d.print_))
         return "\n".join(lines)
 
     def _copy_result(self) -> None:
@@ -565,62 +620,72 @@ class MainWindow(QMainWindow):
         if item is None:
             return
         QGuiApplication.clipboard().setText(self.draw_text(item.data(Qt.UserRole)))
-        self.stage.sanae.say("결과를 복사했어요!", 2.0)
+        self.stage.sanae.say(T("결과를 복사했어요!"), 2.0)
 
     def _export_csv(self) -> None:
         if not self.store.history:
             return
-        path, _ = QFileDialog.getSaveFileName(self, "기록을 CSV로 저장", str(Path.home() / "Desktop" / "기적추첨_기록.csv"),
+        path, _ = QFileDialog.getSaveFileName(self, T("기록을 CSV로 저장"), str(Path.home() / "Desktop" / T("기적추첨_기록.csv")),
                                               "CSV (*.csv)")
         if path:
             self.store.export_csv(Path(path))
-            self.stage.sanae.say("기록을 저장했어요!", 2.0)
+            self.stage.sanae.say(T("기록을 저장했어요!"), 2.0)
 
     def _clear_history(self) -> None:
-        if self.store.history and QMessageBox.question(self, TITLE, "기록을 모두 지울까요?") == QMessageBox.Yes:
+        if self.store.history and QMessageBox.question(self, TITLE, T("기록을 모두 지울까요?")) == QMessageBox.Yes:
             self.store.clear_history()
             self._refresh_history()
 
     # ── 목록 다루기 ──
+    def _all_lists(self) -> dict[str, str]:
+        return {**self.store.lists, **presets.presets(i18n.lang())}
+
     def _fill_lists(self, current: str) -> None:
         self.list_box.blockSignals(True)
         self.list_box.clear()
         self.list_box.addItems(list(self.store.lists))
-        if current in self.store.lists:
+        if self.store.lists:
+            self.list_box.insertSeparator(self.list_box.count())
+        self.list_box.addItems(list(presets.presets(i18n.lang())))
+        if current in self._all_lists():
             self.list_box.setCurrentText(current)
         else:
             self.list_box.setCurrentIndex(-1)
-            self.list_box.setPlaceholderText("(저장 안 한 목록)")
+            self.list_box.setPlaceholderText(T("(저장 안 한 목록)"))
         self.list_box.blockSignals(False)
 
     def _load_list(self, name: str) -> None:
-        if self.busy or name not in self.store.lists:
+        lists = self._all_lists()
+        if self.busy or name not in lists:
             return
-        self.editor.setPlainText(self.store.lists[name])
+        self.editor.setPlainText(lists[name])
         self.store.settings.list_name = name
         self._queue_save()
 
     def _save_list(self) -> None:
         name = self.list_box.currentText()
-        if not name:
+        if not name or name.startswith(presets.MARK):          # 기본 목록은 새 이름으로
             self._save_as()
             return
         self.store.save_list(name, self.editor.toPlainText())
-        self.stage.sanae.say(f"「{name}」 저장했어요!", 2.0)
+        self.stage.sanae.say(T("「{name}」 저장했어요!", name=name), 2.0)
 
     def _save_as(self) -> None:
-        name, ok = QInputDialog.getText(self, TITLE, "새 목록 이름")
+        name, ok = QInputDialog.getText(self, TITLE, T("새 목록 이름"))
         name = name.strip()
         if ok and name:
             self.store.save_list(name, self.editor.toPlainText())
             self.store.settings.list_name = name
             self._fill_lists(name)
             self._queue_save()
-            self.stage.sanae.say(f"「{name}」 저장했어요!", 2.0)
+            self.stage.sanae.say(T("「{name}」 저장했어요!", name=name), 2.0)
 
     def _delete_list(self) -> None:
         name = self.list_box.currentText()
-        if name and QMessageBox.question(self, TITLE, f"「{name}」 목록을 지울까요?") == QMessageBox.Yes:
+        if name.startswith(presets.MARK):
+            self.stage.sanae.say(T("기본 목록은 지울 수 없어요"), 2.5)
+            return
+        if name and QMessageBox.question(self, TITLE, T("「{name}」 목록을 지울까요?", name=name)) == QMessageBox.Yes:
             self.store.delete_list(name)
             self._fill_lists("")
 
@@ -648,11 +713,21 @@ class MainWindow(QMainWindow):
                 out.append(ln)
         self._set_text("\n".join(out))
 
+    def _update_count(self) -> None:
+        text = self.editor.toPlainText()
+        if self.mode == "gacha":
+            pool = core.parse_pool(text)
+            rates = " / ".join(f"{r.name} {r.rate:g}%" for r in pool)
+            self.count.setText(T("등급 {v1}개 · 항목 {v3}개   ·   {rates}", v1=len(pool), v3=sum(len(r.items) for r in pool), rates=rates))
+            return
+        entries = core.parse(text)
+        total = core.total_weight(entries)
+        self.count.setText(T("항목 {v1}개", v1=len(entries)) + (T(" · 가중치 합 {total}", total=total) if total != len(entries) else "")
+                           + T("   ·   한 줄에 하나, '이름 x3' = 세 배"))
+
     def _text_changed(self) -> None:
         entries = core.parse(self.editor.toPlainText())
-        total = core.total_weight(entries)
-        self.count.setText(f"항목 {len(entries)}개" + (f" · 가중치 합 {total}" if total != len(entries) else "")
-                           + "   ·   한 줄에 하나, '이름 x3' = 세 배")
+        self._update_count()
         if not self._programmatic:
             self.stage.wheel.set_entries(entries)
         self._preview()
@@ -668,6 +743,7 @@ class MainWindow(QMainWindow):
         self.stage.set_mode(mode)
         self.opts.setCurrentIndex(MODE_KEYS.index(mode))
         self.editor.setEnabled(mode != "dice")                  # 주사위는 목록을 안 씀
+        self._update_count()
         self._options_changed()
         self._update_go()
         self._queue_save()
@@ -676,24 +752,24 @@ class MainWindow(QMainWindow):
     def busy(self) -> bool:
         r, st = self.stage.raffle, self.stage
         return (st.wheel.spinning or r.phase == "rolling" or r.waiting
-                or any(b.busy for b in (st.ladder, st.teams, st.order, st.dice)))
+                or any(b.busy for b in (st.ladder, st.teams, st.order, st.dice, st.gacha)))
 
     def _update_go(self) -> None:
         r, st = self.stage.raffle, self.stage
-        if any(b.busy for b in (st.ladder, st.teams, st.order, st.dice)):
-            self.go.setText("⏩ 바로 결과 보기")
+        if any(b.busy for b in (st.ladder, st.teams, st.order, st.dice, st.gacha)):
+            self.go.setText(T("⏩ 바로 결과 보기"))
             self.go.setEnabled(True)
         elif st.wheel.spinning or r.phase == "rolling":
-            self.go.setText("기적이 일어나는 중…")
+            self.go.setText(T("기적이 일어나는 중…"))
             self.go.setEnabled(False)
         elif r.waiting and not r.auto:
-            self.go.setText(f"다음 발표 ▶   ({r.done_count} / {r._total})")
+            self.go.setText(T("다음 발표 ▶   ({done_count} / {v3})", done_count=r.done_count, v3=r._total))
             self.go.setEnabled(True)
         elif r.waiting:
-            self.go.setText("발표 중…")
+            self.go.setText(T("발표 중…"))
             self.go.setEnabled(False)
         else:
-            self.go.setText("✨ 기적을 일으키기!   (Space)")
+            self.go.setText(T("✨ 기적을 일으키기!   (Space)"))
             self.go.setEnabled(True)
         for b in self.mode_btns.values():
             b.setEnabled(not self.busy)
@@ -704,11 +780,11 @@ class MainWindow(QMainWindow):
             self.stage.cutin.finish()
         r = self.stage.raffle
         if r.waiting and not r.auto:
-            self.stage.sanae.set_mode("spin", "다음은…!", 1.5)
+            self.stage.sanae.set_mode("spin", T("다음은…!"), 1.5)
             r.next()
             self._update_go()
             return
-        for board in (self.stage.ladder, self.stage.teams, self.stage.order, self.stage.dice):
+        for board in (self.stage.ladder, self.stage.teams, self.stage.order, self.stage.dice, self.stage.gacha):
             if board.busy:                                       # 진행 중 → 바로 결과
                 board.skip()
                 self._update_go()
@@ -717,17 +793,17 @@ class MainWindow(QMainWindow):
             return
         entries = core.parse(self.editor.toPlainText())
         {"wheel": self._spin, "raffle": self._draw, "ladder": self._ladder, "teams": self._teams,
-         "order": self._order, "dice": lambda _e: self._dice()}[self.mode](entries)
+         "order": self._order, "dice": lambda _e: self._dice(), "gacha": lambda _e: self._gacha()}[self.mode](entries)
 
     def _title(self) -> str:
         name = self.list_box.currentText()
-        if name and self.store.lists.get(name, "").strip() == self.editor.toPlainText().strip():
+        if name and self._all_lists().get(name, "").strip() == self.editor.toPlainText().strip():
             return name
-        return f"{name} (고침)" if name else "저장 안 한 목록"
+        return T("{name} (고침)", name=name) if name else T("저장 안 한 목록")
 
     def _spin(self, entries: list[core.Entry]) -> None:
         if not entries:
-            self._oops("목록이 비어 있어요! 오른쪽에 적어 주세요.")
+            self._oops(T("목록이 비어 있어요! 오른쪽에 적어 주세요."))
             return
         seed = core.new_seed()
         idx, frac = core.spin(entries, seed)
@@ -744,10 +820,10 @@ class MainWindow(QMainWindow):
         d = Draw(now_text(), "wheel", self._title(), len(entries), seed, core.fingerprint(entries), [name], text)
         self.store.add(d)
         self._refresh_history()
-        self.stage.sanae.set_mode("happy", f"「{name}」! 기적이에요!", 5.5)
-        self._miracle("✨ 기적 발생! ✨", name)
+        self.stage.sanae.set_mode("happy", T("「{name}」! 기적이에요!", name=name), 5.5)
+        self._miracle(T("✨ 기적 발생! ✨"), name)
         self._obs("wheel", [name])
-        self.result.setText(f"🎡 결과: <b>{name}</b>   ·   {len(entries)}개 중   ·   시드 {core.seed_text(seed)}")
+        self.result.setText(T("🎡 결과: <b>{name}</b>   ·   {v3}개 중   ·   시드 {v5}", name=name, v3=len(entries), v5=core.seed_text(seed)))
         if self.remove_winner.isChecked():                       # 뽑힌 줄 하나 빼기 (바퀴는 다음에 돌릴 때 바뀜)
             lines = text.split("\n")
             for i, ln in enumerate(lines):
@@ -768,17 +844,17 @@ class MainWindow(QMainWindow):
     def _draw(self, entries: list[core.Entry]) -> None:
         tiers = self.tiers()
         if not entries or not tiers:
-            self._oops("목록이나 등수가 비어 있어요!" if not entries else "등수의 인원을 정해 주세요!")
+            self._oops(T("목록이나 등수가 비어 있어요!") if not entries else T("등수의 인원을 정해 주세요!"))
             return
         exclude = self._last_winners() if self.exclude_last.isChecked() else set()
         seed = core.new_seed()
         results = core.raffle(entries, tiers, seed, self.unique.isChecked(), exclude)
         order = core.reveal_order(results)
         if not order:
-            self._oops("뽑을 수 있는 사람이 없어요…")
+            self._oops(T("뽑을 수 있는 사람이 없어요…"))
             return
         self._pending = (entries, results, seed, self.editor.toPlainText())
-        self.stage.sanae.set_mode("spin", "누가 뽑힐까요…!", 2.0)
+        self.stage.sanae.set_mode("spin", T("누가 뽑힐까요…!"), 2.0)
         self.stage.raffle.start(results, order, [e.name for e in entries], self._revealed, self._raffle_done,
                                 auto=self.auto.isChecked(), speed=SPEED)
         self._update_go()
@@ -786,10 +862,10 @@ class MainWindow(QMainWindow):
 
     def _revealed(self, tier: str, name: str, n: int, total: int) -> None:
         if n == total:
-            self._miracle(f"✨ {tier} — 기적 발생! ✨", name)
-            self.stage.sanae.set_mode("happy", f"{tier}은(는) 「{name}」! 축하해요!", 4.0)
+            self._miracle(T("✨ {tier} — 기적 발생! ✨", tier=tier), name)
+            self.stage.sanae.set_mode("happy", T("{tier}은(는) 「{name}」! 축하해요!", tier=tier, name=name), 4.0)
         else:
-            self.stage.sanae.set_mode("happy", f"{tier}: 「{name}」!", 2.5)
+            self.stage.sanae.set_mode("happy", T("{tier}: 「{name}」!", tier=tier, name=name), 2.5)
             sound.play("win")
         self._update_go()
 
@@ -799,7 +875,7 @@ class MainWindow(QMainWindow):
         self.store.add(d)
         self._refresh_history()
         self._obs("raffle", results)
-        self.result.setText(f"🎫 {core.summary('raffle', results)}   ·   {len(entries)}명 중   ·   시드 {core.seed_text(seed)}")
+        self.result.setText(T("🎫 {v1}   ·   {v3}명 중   ·   시드 {v5}", v1=core.summary('raffle', results), v3=len(entries), v5=core.seed_text(seed)))
         QTimer.singleShot(0, self._update_go)
         log.info("당첨자 뽑기 결과: %s", core.summary("raffle", results))
 
@@ -807,7 +883,7 @@ class MainWindow(QMainWindow):
         self.store.add(Draw(now_text(), mode, title, count, seed, core.fingerprint(entries), result, text))
         self._refresh_history()
         self._obs(mode, result)
-        self.result.setText(f"{MODE_ICONS[mode]} {core.summary(mode, result)}   ·   시드 {core.seed_text(seed)}")
+        self.result.setText(T("{v0} {v2}   ·   시드 {v4}", v0=MODE_ICONS[mode], v2=core.summary(mode, result), v4=core.seed_text(seed)))
         QTimer.singleShot(0, self._update_go)
         log.info("%s 결과: %s", core.MODE_NAMES[mode], core.summary(mode, result))
 
@@ -815,13 +891,13 @@ class MainWindow(QMainWindow):
     def _ladder(self, entries: list[core.Entry]) -> None:
         names = core.names_of(entries)
         if not 2 <= len(names) <= core.LADDER_MAX:
-            self._oops(f"사다리는 2~{core.LADDER_MAX}명이 탈 수 있어요!")
+            self._oops(T("사다리는 2~{LADDER_MAX}명이 탈 수 있어요!", LADDER_MAX=core.LADDER_MAX))
             return
         bottom = core.ladder_results(self.ladder_text.toPlainText(), len(names))
         seed = core.new_seed()
         lad = core.ladder(len(names), seed)
         self._pending = (entries, seed, self.editor.toPlainText(), names, bottom, lad)
-        self.stage.sanae.set_mode("spin", "어디로 내려갈까요~?", 2.0)
+        self.stage.sanae.set_mode("spin", T("어디로 내려갈까요~?"), 2.0)
         self.stage.ladder.start(names, bottom, lad, self._ladder_step, self._ladder_done, SPEED)
         self._update_go()
 
@@ -830,7 +906,7 @@ class MainWindow(QMainWindow):
             self.stage.sanae.say(f"{name}: {result}", 1.6)
             sound.play("pop")
         else:
-            self.stage.sanae.set_mode("happy", f"「{name}」 → {result}!", 2.5)
+            self.stage.sanae.set_mode("happy", T("「{name}」 → {result}!", name=name, result=result), 2.5)
             sound.play("win")
 
     def _ladder_done(self) -> None:
@@ -838,48 +914,102 @@ class MainWindow(QMainWindow):
         pairs = [[names[s], bottom[lad.end_of(s)]] for s in range(len(names))]
         hits = [(a, b) for a, b in pairs if not is_blank(b)]
         if len(hits) == 1:
-            self._miracle("✨ 사다리 결과 ✨", f"{hits[0][0]} → {hits[0][1]}")
+            self._miracle(T("✨ 사다리 결과 ✨"), f"{hits[0][0]} → {hits[0][1]}")
         else:
-            self._miracle("✨ 사다리 완료 ✨", "모두 공개!")
+            self._miracle(T("✨ 사다리 완료 ✨"), T("모두 공개!"))
         self._record("ladder", self._title(), len(names), seed, entries, pairs, text)
 
     # ── 팀 나누기 ──
     def _teams(self, entries: list[core.Entry]) -> None:
         names = core.names_of(entries)
         if len(names) < 2:
-            self._oops("두 명 이상 적어 주세요!")
+            self._oops(T("두 명 이상 적어 주세요!"))
             return
         n = min(self.teams_count.value(), len(names))
         seed = core.new_seed()
         result = core.teams(entries, n, seed, self.teams_style.currentData())
         self._pending = (entries, seed, self.editor.toPlainText(), result)
-        self.stage.sanae.set_mode("spin", "팀을 나눠 볼게요!", 2.0)
+        self.stage.sanae.set_mode("spin", T("팀을 나눠 볼게요!"), 2.0)
         self.stage.teams.start(result, self._teams_done, SPEED)
         self._update_go()
 
     def _teams_done(self) -> None:
         entries, seed, text, result = self._pending
-        self.stage.sanae.set_mode("happy", "팀이 정해졌어요! 다들 힘내요~", 4.0)
-        self._miracle("✨ 팀 나누기 완료 ✨", f"{len(result)}팀 · {len(entries)}명")
+        self.stage.sanae.set_mode("happy", T("팀이 정해졌어요! 다들 힘내요~"), 4.0)
+        self._miracle(T("✨ 팀 나누기 완료 ✨"), T("{v0}팀 · {v2}명", v0=len(result), v2=len(entries)))
         self._record("teams", self._title(), len(entries), seed, entries, [[t, list(m)] for t, m in result], text)
 
     # ── 순서 정하기 ──
     def _order(self, entries: list[core.Entry]) -> None:
         if len(entries) < 2:
-            self._oops("두 명 이상 적어 주세요!")
+            self._oops(T("두 명 이상 적어 주세요!"))
             return
         seed = core.new_seed()
         result = core.order(entries, seed)
         self._pending = (entries, seed, self.editor.toPlainText(), result)
-        self.stage.sanae.set_mode("spin", "순서를 정해 볼게요!", 2.0)
+        self.stage.sanae.set_mode("spin", T("순서를 정해 볼게요!"), 2.0)
         self.stage.order.start(result, self._order_done, SPEED)
         self._update_go()
 
     def _order_done(self) -> None:
         entries, seed, text, result = self._pending
-        self.stage.sanae.set_mode("happy", f"1번은 「{result[0]}」!", 4.0)
-        self._miracle("✨ 1번은… ✨", result[0])
+        self.stage.sanae.set_mode("happy", T("1번은 「{v1}」!", v1=result[0]), 4.0)
+        self._miracle(T("✨ 1번은… ✨"), result[0])
         self._record("order", self._title(), len(entries), seed, entries, result, text)
+
+    # ── 가챠 ──
+    def _gacha(self) -> None:
+        pool = core.parse_pool(self.editor.toPlainText())
+        if not pool:
+            self._oops(T("가챠 목록이 비어 있어요! '예시 넣기'를 눌러 보세요."))
+            return
+        n = self.gacha_pulls.value()
+        seed = core.new_seed()
+        cards = core.gacha(pool, n, seed, self.gacha_guarantee.isChecked())
+        ranks = [r.name for r in pool]
+        self._pending = (pool, seed, self.editor.toPlainText(), cards, ranks)
+        self.stage.sanae.set_mode("spin", T("두근두근… 뽑아 볼게요!"), 2.0)
+        self.stage.gacha.start(cards, ranks, self._gacha_flip, self._gacha_done, SPEED)
+        self._update_go()
+
+    def _gacha_flip(self, _i: int, rarity: str, item: str) -> None:
+        ranks = self._pending[4]
+        rank = ranks.index(rarity)
+        if rank == 0 and len(ranks) > 1:
+            self.stage.sanae.set_mode("happy", T("{rarity}! 「{item}」!", rarity=rarity, item=item), 2.5)
+            sound.play("win")
+        elif rank == 1 and len(ranks) > 2:
+            sound.play("ding")
+        else:
+            sound.play("pop")
+
+    def _gacha_done(self) -> None:
+        pool, seed, text, cards, ranks = self._pending
+        best = min(ranks.index(r) for r, _ in cards)
+        top = [item for r, item in cards if ranks.index(r) == best]
+        if best == 0 and len(ranks) > 1:
+            self._miracle(T("✨ {v1} 기적 발생! ✨", v1=ranks[0]), ", ".join(top))
+        else:
+            self.stage.sanae.set_mode("happy", f"{ranks[best]}: {', '.join(top)}", 4.0)
+            sound.play("ding")
+        self._record("gacha", self._title(), sum(len(r.items) for r in pool), seed, core.pool_entries(pool),
+                     [ranks, [list(c) for c in cards]], text)
+
+    # ── 언어 ──
+    def _lang_changed(self, _i: int) -> None:
+        code = self.lang_box.currentData()
+        if code == self.store.settings.lang:
+            return
+        self.store.settings.lang = code
+        self._save_settings()
+        if QMessageBox.question(self, TITLE, T("언어를 바꾸려면 다시 시작해야 해요. 지금 다시 시작할까요?")) == QMessageBox.Yes:
+            self._restart()
+
+    def _restart(self) -> None:
+        from PySide6.QtCore import QProcess
+        args = sys.argv[1:] if getattr(sys, "frozen", False) else sys.argv
+        QProcess.startDetached(sys.executable, args)
+        self.close()
 
     # ── 주사위 · 동전 · 숫자 ──
     def _dice(self) -> None:
@@ -888,7 +1018,7 @@ class MainWindow(QMainWindow):
         values = core.roll(kind, seed, count, sides, lo, hi, unique)
         label = core.dice_label(kind, len(values), sides, lo, hi)
         self._pending = (seed, label, values, kind)
-        self.stage.sanae.set_mode("spin", {"coin": "던져 볼게요~!", "number": "숫자를 뽑아 볼게요!"}.get(kind, "굴려 볼게요~!"), 2.0)
+        self.stage.sanae.set_mode("spin", {"coin": T("던져 볼게요~!"), "number": T("숫자를 뽑아 볼게요!")}.get(kind, T("굴려 볼게요~!")), 2.0)
         self.stage.dice.start(kind, values, sides, lo, hi, self._dice_done, SPEED)
         sound.play("rattle", 1.6 * SPEED)
         self._update_go()
@@ -896,12 +1026,12 @@ class MainWindow(QMainWindow):
     def _dice_done(self) -> None:
         seed, label, values, kind = self._pending
         if kind == "dice" and len(values) > 1:
-            big = f"합계 {sum(values)}"
+            big = T("합계 {v1}", v1=sum(values))
         elif kind == "coin" and len(values) == 1:
-            big = f"{values[0]}면!"
+            big = T("{v0}면!", v0=values[0])
         else:
             big = ", ".join(str(v) for v in values)
-        self.stage.sanae.set_mode("happy", f"{big}! 기적이에요~", 4.0)
+        self.stage.sanae.set_mode("happy", T("{big}! 기적이에요~", big=big), 4.0)
         self._miracle(f"✨ {label} ✨", big, burst=60, sound_name="coin" if kind == "coin" else "fanfare")
         self._record("dice", label, len(values), seed, [], [label, values], "")
 
@@ -929,6 +1059,9 @@ class MainWindow(QMainWindow):
         s.background = self.bg_box.currentData()
         s.hotkey = self.hotkey_box.currentData()
         s.obs_text = self.obs_on.isChecked()
+        s.gacha_pulls = self.gacha_pulls.value()
+        s.gacha_guarantee = self.gacha_guarantee.isChecked()
+        s.lang = self.lang_box.currentData()
         self.store.save_settings()
 
     def closeEvent(self, e) -> None:
@@ -960,16 +1093,16 @@ class MainWindow(QMainWindow):
             lab = QLabel(text, objectName="hint")
             lab.setWordWrap(True)
             v.addWidget(lab)
-        v.addWidget(QLabel("<b>🔊 효과음</b>"))
+        v.addWidget(QLabel(T("<b>🔊 효과음</b>")))
         row = QHBoxLayout()
-        self.sound_on = QCheckBox("효과음 내기")
+        self.sound_on = QCheckBox(T("효과음 내기"))
         self.sound_on.setChecked(s.sound_on)
         self.sound_on.toggled.connect(self._sound_changed)
         self.sound_level = QComboBox()
-        self.sound_level.addItems(["작게", "보통", "크게"])
+        self.sound_level.addItems([T("작게"), T("보통"), T("크게")])
         self.sound_level.setCurrentIndex(max(0, min(2, s.sound_level)))
         self.sound_level.currentIndexChanged.connect(self._sound_changed)
-        listen = QPushButton("▶ 들어보기", objectName="small")
+        listen = QPushButton(T("▶ 들어보기"), objectName="small")
         listen.setCursor(Qt.PointingHandCursor)
         listen.clicked.connect(lambda: sound.play("fanfare"))
         row.addWidget(self.sound_on)
@@ -978,23 +1111,23 @@ class MainWindow(QMainWindow):
         row.addStretch(1)
         v.addLayout(row)
         v.addSpacing(6)
-        v.addWidget(QLabel("<b>🎨 무대 배경</b>"))
+        v.addWidget(QLabel(T("<b>🎨 무대 배경</b>")))
         self.bg_box = QComboBox()
         for key, label in BACKGROUNDS:
             self.bg_box.addItem(label, key)
         self.bg_box.setCurrentIndex([k for k, _ in BACKGROUNDS].index(s.background) if s.background in dict(BACKGROUNDS) else 0)
         self.bg_box.currentIndexChanged.connect(self._bg_changed)
         v.addWidget(self.bg_box)
-        hint("OBS 의 크로마 키 필터로 배경을 지울 수 있어요. 사나에 머리가 초록이라 자홍·파랑을 추천해요.")
+        hint(T("OBS 의 크로마 키 필터로 배경을 지울 수 있어요. 사나에 머리가 초록이라 자홍·파랑을 추천해요."))
         v.addSpacing(6)
-        v.addWidget(QLabel("<b>📺 방송 창</b>"))
-        self.stream_btn = QPushButton("📺 무대만 따로 띄우기", objectName="small")
+        v.addWidget(QLabel(T("<b>📺 방송 창</b>")))
+        self.stream_btn = QPushButton(T("📺 무대만 따로 띄우기"), objectName="small")
         self.stream_btn.setCursor(Qt.PointingHandCursor)
         self.stream_btn.clicked.connect(self.toggle_stream)
         v.addWidget(self.stream_btn, 0, Qt.AlignLeft)
-        hint("무대만 큰 창으로 띄워요 (OBS 창 캡처용). 조작은 이 창에서 하고, 방송 창에서도 Space 로 진행돼요.")
+        hint(T("무대만 큰 창으로 띄워요 (OBS 창 캡처용). 조작은 이 창에서 하고, 방송 창에서도 Space 로 진행돼요."))
         v.addSpacing(6)
-        v.addWidget(QLabel("<b>⌨ 전역 단축키</b>  (다른 창을 보고 있어도)"))
+        v.addWidget(QLabel(T("<b>⌨ 전역 단축키</b>  (다른 창을 보고 있어도)")))
         row2 = QHBoxLayout()
         self.hotkey_box = QComboBox()
         for key, label in HOTKEYS:
@@ -1005,10 +1138,10 @@ class MainWindow(QMainWindow):
         row2.addWidget(self.hotkey_box)
         row2.addWidget(self.hotkey_state, 1)
         v.addLayout(row2)
-        hint("게임·방송 프로그램을 보고 있을 때도 이 키로 바로 기적을 일으켜요. 누른 키는 기록하지 않아요.")
+        hint(T("게임·방송 프로그램을 보고 있을 때도 이 키로 바로 기적을 일으켜요. 누른 키는 기록하지 않아요."))
         v.addSpacing(6)
-        v.addWidget(QLabel("<b>📝 OBS 텍스트</b>"))
-        self.obs_on = QCheckBox("결과를 텍스트 파일로 내보내기")
+        v.addWidget(QLabel(T("<b>📝 OBS 텍스트</b>")))
+        self.obs_on = QCheckBox(T("결과를 텍스트 파일로 내보내기"))
         self.obs_on.setChecked(s.obs_text)
         self.obs_on.toggled.connect(self._queue_save)
         v.addWidget(self.obs_on)
@@ -1017,12 +1150,12 @@ class MainWindow(QMainWindow):
         path.setWordWrap(True)
         path.setTextInteractionFlags(Qt.TextSelectableByMouse)
         v.addWidget(path)
-        open_btn = QPushButton("📁 폴더 열기", objectName="small")
+        open_btn = QPushButton(T("📁 폴더 열기"), objectName="small")
         open_btn.setCursor(Qt.PointingHandCursor)
         open_btn.clicked.connect(self._open_obs_dir)
         v.addWidget(open_btn, 0, Qt.AlignLeft)
-        hint("OBS 텍스트 소스 → '파일에서 읽기' 로 winner.txt(한 줄 결과) 또는 result.txt(자세히)를 고르세요. "
-             "추첨이 끝날 때마다 바뀌어요.")
+        hint(T("OBS 텍스트 소스 → '파일에서 읽기' 로 winner.txt(한 줄 결과) 또는 result.txt(자세히)를 고르세요. "
+             "추첨이 끝날 때마다 바뀌어요."))
         v.addStretch(1)
         return w
 
@@ -1037,7 +1170,7 @@ class MainWindow(QMainWindow):
 
     def _set_hotkey(self, key: str) -> None:
         ok = self.hotkey.set(key)
-        self.hotkey_state.setText("" if key == "off" else ("✔ 등록됐어요" if ok else "✖ 다른 프로그램이 이미 쓰고 있어요"))
+        self.hotkey_state.setText("" if key == "off" else (T("✔ 등록됐어요") if ok else T("✖ 다른 프로그램이 이미 쓰고 있어요")))
         self._queue_save()
 
     @property
@@ -1058,7 +1191,7 @@ class MainWindow(QMainWindow):
         self.stream_win.box.addWidget(self.stage)
         self.stage.show()
         self.stream_win.show()
-        self.stream_btn.setText("↩ 무대 되돌리기")
+        self.stream_btn.setText(T("↩ 무대 되돌리기"))
         log.info("방송 창 열기")
 
     def _stream_closed(self) -> None:
@@ -1069,7 +1202,7 @@ class MainWindow(QMainWindow):
         self.stage_placeholder.hide()
         self.left.insertWidget(idx, self.stage, 1)
         self.stage.show()
-        self.stream_btn.setText("📺 무대만 따로 띄우기")
+        self.stream_btn.setText(T("📺 무대만 따로 띄우기"))
         log.info("방송 창 닫기")
 
     def _obs(self, mode: str, result) -> None:

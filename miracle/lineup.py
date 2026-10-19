@@ -9,6 +9,7 @@ from typing import Callable
 from PySide6.QtCore import QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
+from .i18n import T, font
 
 TEAM_COLORS = ["#E8657A", "#3D7DD8", "#2E9E5B", "#F2A230", "#8E6CD8", "#3FB7C4", "#D8579A", "#7FBF3F",
                "#F28C38", "#5B8DEF", "#C9A030", "#4FA3A0"]
@@ -18,12 +19,15 @@ NAMED_COLORS = {"빨강": "#E04848", "파랑": "#3D6FD8", "초록": "#2E9E5B", "
 
 
 def team_color(name: str, i: int) -> QColor:
-    base = name.replace(" 팀", "")
-    return QColor(NAMED_COLORS.get(base, TEAM_COLORS[i % len(TEAM_COLORS)]))
+    """'빨강 팀' 같은 색깔 팀은 그 색으로 (번역된 이름이어도)."""
+    for color, code in NAMED_COLORS.items():
+        if name == T("{name} 팀", name=T(color)):
+            return QColor(code)
+    return QColor(TEAM_COLORS[i % len(TEAM_COLORS)])
 
 
 def _fit(p: QPainter, text: str, rect: QRectF, size: int, bold: bool = True, minimum: int = 9) -> None:
-    f = QFont("Malgun Gothic")
+    f = QFont(font())
     f.setBold(bold)
     f.setPixelSize(size)
     while size > minimum and QFontMetricsF(f).horizontalAdvance(text) > rect.width():
@@ -136,7 +140,7 @@ class TeamsStage(_Reveal):
             p.fillRect(head, col)
             p.restore()
             p.setPen(QColor("#FFFFFF"))
-            _fit(p, f"  {name}   ({len(members[i])}명)", head.adjusted(6, 0, -6, 0), 15)
+            _fit(p, T("  {name}   ({v3}명)", name=name, v3=len(members[i])), head.adjusted(6, 0, -6, 0), 15)
             names = members[i]
             if not names:
                 continue
@@ -176,20 +180,20 @@ class OrderStage(_Reveal):
         p.drawPath(path)
         if self.shown:
             k = self.shown
-            big = QFont("Malgun Gothic")
+            big = QFont(font())
             big.setBold(True)
             big.setPixelSize(22)
             p.setFont(big)
             p.setPen(QColor("#2E9E5B"))
-            p.drawText(top.adjusted(22, 0, 0, 0), Qt.AlignLeft | Qt.AlignVCenter, f"{k}번")
+            p.drawText(top.adjusted(22, 0, 0, 0), Qt.AlignLeft | Qt.AlignVCenter, T("{k}번", k=k))
             p.setPen(QColor("#C8102E") if k == 1 else QColor("#22352A"))
             _fit(p, self.names[k - 1], top.adjusted(110, 0, -20, 0), 40)
         else:
-            f = QFont("Malgun Gothic", 14)
+            f = QFont(font(), 14)
             f.setBold(True)
             p.setFont(f)
             p.setPen(QColor("#7A8B80"))
-            p.drawText(top, Qt.AlignCenter, "✨ 기적을 일으키면 1번부터 불러 줄게요")
+            p.drawText(top, Qt.AlignCenter, T("✨ 기적을 일으키면 1번부터 불러 줄게요"))
         body = QRectF(24, top.bottom() + 16, w - 48, h - top.bottom() - 28)
         shown = self.names[:self.shown]
         if not shown:

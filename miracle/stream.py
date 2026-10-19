@@ -17,12 +17,13 @@ from typing import Callable
 from PySide6.QtCore import QAbstractNativeEventFilter, Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QVBoxLayout, QWidget
+from .i18n import T
 
 log = logging.getLogger("Miracle.stream")
-BACKGROUNDS = (("sky", "하늘 (기본)"), ("magenta", "크로마키 자홍 #FF00FF"), ("blue", "크로마키 파랑 #0000FF"),
-               ("green", "크로마키 초록 #00FF00"))
+BACKGROUNDS = (("sky", T("하늘 (기본)")), ("magenta", T("크로마키 자홍 #FF00FF")), ("blue", T("크로마키 파랑 #0000FF")),
+               ("green", T("크로마키 초록 #00FF00")))
 BG_COLORS = {"magenta": "#FF00FF", "blue": "#0000FF", "green": "#00FF00"}
-HOTKEYS = (("off", "끄기"), ("ctrl_alt_m", "Ctrl + Alt + M"), ("ctrl_alt_space", "Ctrl + Alt + Space"), ("f9", "F9"))
+HOTKEYS = (("off", T("끄기")), ("ctrl_alt_m", "Ctrl + Alt + M"), ("ctrl_alt_space", "Ctrl + Alt + Space"), ("f9", "F9"))
 _MOD_ALT, _MOD_CONTROL, _MOD_NOREPEAT = 0x1, 0x2, 0x4000
 _KEYS = {"ctrl_alt_m": (_MOD_CONTROL | _MOD_ALT, 0x4D), "ctrl_alt_space": (_MOD_CONTROL | _MOD_ALT, 0x20),
          "f9": (0, 0x78)}
@@ -105,7 +106,7 @@ class StreamWindow(QWidget):
 
     def __init__(self, on_close: Callable[[], None], act: Callable[[], None]):
         super().__init__(None, Qt.Window)
-        self.setWindowTitle("사나에의 기적 추첨기 — 방송 화면")
+        self.setWindowTitle(T("사나에의 기적 추첨기 — 방송 화면"))
         self.on_close = on_close
         self.box = QVBoxLayout(self)
         self.box.setContentsMargins(0, 0, 0, 0)

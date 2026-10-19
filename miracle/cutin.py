@@ -12,6 +12,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
 
+from .i18n import font
 from .sanae import Sprites
 
 CONFETTI = ["#4CB878", "#3D7DD8", "#F2C230", "#E8657A", "#FFFFFF", "#8E6CD8", "#3FB7C4"]
@@ -112,13 +113,13 @@ class MiracleCutIn(QWidget):
         p.drawImage(QRectF(sx - anchor.x() * k, band.bottom() + 8 - anchor.y() * k, img.width() * k, img.height() * k), img)
         tx = band.left() + w * 0.30
         tw = w * 0.66
-        f = QFont("Malgun Gothic", 14)
+        f = QFont(font(), 14)
         f.setBold(True)
         p.setFont(f)
         p.setPen(QColor("#FFF6B0"))
         p.drawText(QRectF(tx, band.top() + 12, tw, 30), Qt.AlignLeft | Qt.AlignVCenter, self.title)
         size = int(band_h * 0.36)
-        big = QFont("Malgun Gothic")
+        big = QFont(font())
         big.setBold(True)
         big.setPixelSize(size)
         while size > 16 and QFontMetricsF(big).horizontalAdvance(self.text) > tw - 10:

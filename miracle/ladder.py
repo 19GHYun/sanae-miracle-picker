@@ -11,6 +11,7 @@ from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, 
 from PySide6.QtWidgets import QWidget
 
 from .core import Ladder, is_blank
+from .i18n import T, font
 
 COLORS = ["#E8657A", "#3D7DD8", "#2E9E5B", "#F2A230", "#8E6CD8", "#3FB7C4", "#D8579A", "#7FBF3F",
           "#F28C38", "#5B8DEF", "#C9A030", "#4FA3A0"]
@@ -119,11 +120,11 @@ class LadderStage(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         n = len(self.top)
         if n < 2:
-            f = QFont("Malgun Gothic", 13)
+            f = QFont(font(), 13)
             f.setBold(True)
             p.setFont(f)
             p.setPen(QColor("#5A6B60"))
-            p.drawText(self.rect(), Qt.AlignCenter, "사다리는 2명부터 탈 수 있어요\n(오른쪽 목록에 한 줄에 한 명씩)")
+            p.drawText(self.rect(), Qt.AlignCenter, T("사다리는 2명부터 탈 수 있어요\n(오른쪽 목록에 한 줄에 한 명씩)"))
             p.end()
             return
         _, colw, top, bottom = self._geom()
@@ -141,17 +142,17 @@ class LadderStage(QWidget):
             p.setPen(Qt.NoPen)
             p.setBrush(QColor(255, 255, 255, 215))
             p.drawRoundedRect(curtain, 14, 14)
-            f = QFont("Malgun Gothic", 14)
+            f = QFont(font(), 14)
             f.setBold(True)
             p.setFont(f)
             p.setPen(QColor("#2E9E5B"))
-            p.drawText(curtain, Qt.AlignCenter, "✨ 기적을 일으키면 사다리가 나타나요")
+            p.drawText(curtain, Qt.AlignCenter, T("✨ 기적을 일으키면 사다리가 나타나요"))
         if self.ladder is not None:                                          # 지나간 길
             for s in self.done_starts:
                 self._draw_path(p, s, 1.0, 4.5, 170)
             if self.current is not None and self.phase == "tracing":
                 self._draw_path(p, self.current, self.progress, 7, 255, head=True)
-        f = QFont("Malgun Gothic")
+        f = QFont(font())
         f.setBold(True)
         f.setPixelSize(max(10, min(15, int(colw * 0.22))))
         fm = QFontMetricsF(f)

@@ -12,6 +12,8 @@ import re
 import secrets
 from dataclasses import dataclass
 
+from .i18n import T
+
 MAX_WEIGHT = 1000
 # "이름 x3" · "이름*3" · "치킨x3"(한글 바로 뒤) — "FX3" 같은 영문 이름은 그대로 이름
 _WEIGHT = re.compile(r"^(.*?)(?:\s+[xX×]|(?<=[^\x00-\x7F])[xX×]|\s*\*)\s*(\d+)$")
@@ -120,7 +122,7 @@ def reveal_order(results: list[tuple[str, list[str]]]) -> list[tuple[str, str]]:
 
 
 # ── 순서 정하기 · 팀 나누기 · 사다리 · 주사위 (가중치는 쓰지 않음: 한 줄 = 한 명) ──
-TEAM_NAMES = {
+TEAM_NAMES = {                                         # 원문(한국어) — 화면에 낼 때 T() 로 번역
     "number": [],                                      # 1팀, 2팀 …
     "touhou": ["하쿠레이", "모리야", "홍마관", "영원정", "백옥루", "지령전", "명련사", "신령묘",
                "요괴의 산", "마법의 숲", "인간 마을", "휘침성"],
@@ -128,6 +130,7 @@ TEAM_NAMES = {
 }
 LADDER_MAX = 20
 DICE_SIDES = (4, 6, 8, 10, 12, 20, 100)
+_DICE = re.compile(r"\d+d\d+$")
 
 
 def names_of(entries: list[Entry]) -> list[str]:
@@ -143,7 +146,7 @@ def order(entries: list[Entry], seed: int) -> list[str]:
 
 def team_names(n: int, style: str = "number") -> list[str]:
     pool = TEAM_NAMES.get(style) or []
-    return [f"{pool[i]} 팀" if i < len(pool) else f"{i + 1}팀" for i in range(n)]
+    return [T("{name} 팀", name=T(pool[i])) if i < len(pool) else T("{n}팀", n=i + 1) for i in range(n)]
 
 
 def teams(entries: list[Entry], n: int, seed: int, style: str = "number") -> list[tuple[str, list[str]]]:
@@ -214,8 +217,8 @@ def ladder_results(results_text: str, n: int) -> list[str]:
     """사다리 아래 칸: 적은 결과를 n 칸에 맞춤 (모자라면 '꽝', 넘치면 자름). 비어 있으면 당첨 1 + 꽝."""
     got = [e.name for e in parse(results_text)][:n]
     if not got:
-        got = ["당첨"]
-    return got + ["꽝"] * (n - len(got))
+        got = [T("당첨")]
+    return got + [T("꽝")] * (n - len(got))
 
 
 def roll(kind: str, seed: int, count: int = 1, sides: int = 6, lo: int = 1, hi: int = 100,
@@ -224,7 +227,7 @@ def roll(kind: str, seed: int, count: int = 1, sides: int = 6, lo: int = 1, hi: 
     rng = random.Random(seed)
     count = max(1, count)
     if kind == "coin":
-        return [rng.choice(["앞", "뒤"]) for _ in range(count)]
+        return [rng.choice([T("앞"), T("뒤")]) for _ in range(count)]
     if kind == "number":
         lo, hi = min(lo, hi), max(lo, hi)
         if unique:
@@ -235,19 +238,89 @@ def roll(kind: str, seed: int, count: int = 1, sides: int = 6, lo: int = 1, hi: 
 
 def dice_label(kind: str, count: int, sides: int, lo: int, hi: int) -> str:
     if kind == "coin":
-        return f"동전 {count}개"
+        return T("동전 {count}개", count=count)
     if kind == "number":
-        return f"숫자 {min(lo, hi)}~{max(lo, hi)} · {count}개"
-    return f"주사위 {count}d{sides}"
+        return T("숫자 {lo}~{hi} · {count}개", lo=min(lo, hi), hi=max(lo, hi), count=count)
+    return T("주사위 {count}d{sides}", count=count, sides=sides)
+
+
+# ── 가챠: [등급 확률] 줄 아래에 그 등급의 항목들. 확률을 안 적은 등급은 남은 확률을 나눠 가짐 ──
+_HEADER = re.compile(r"^\[\s*([^\]\s]+)\s*(?:([\d.]+)\s*%?)?\s*\]$")
+
+
+@dataclass(frozen=True)
+class Rarity:
+    name: str
+    rate: float                 # % (합이 100 이 되게 맞춤)
+    items: tuple[str, ...]
+
+
+def parse_pool(text: str) -> list[Rarity]:
+    """가챠 목록: 위에 적은 등급일수록 귀함. 등급 줄이 없으면 전부 한 등급(N)."""
+    groups: list[list] = []
+    for raw in text.replace("\r", "").split("\n"):
+        ln = raw.strip()
+        if not ln or ln.startswith("#"):
+            continue
+        m = _HEADER.match(ln)
+        if m:
+            groups.append([m.group(1), float(m.group(2)) if m.group(2) else None, []])
+        else:
+            if not groups:
+                groups.append(["N", None, []])
+            groups[-1][2].append(ln)
+    groups = [g for g in groups if g[2]]
+    given = sum(g[1] for g in groups if g[1] is not None)
+    blank = [g for g in groups if g[1] is None]
+    for g in blank:
+        g[1] = max(0.0, 100.0 - given) / len(blank) if given < 100 else 0.0
+    total = sum(g[1] for g in groups) or 1.0
+    if all(g[1] == 0 for g in groups):
+        total = len(groups) or 1
+        for g in groups:
+            g[1] = 1.0
+    return [Rarity(name, rate * 100.0 / total, tuple(items)) for name, rate, items in groups]
+
+
+def gacha(pool: list[Rarity], n: int, seed: int, guarantee: bool = True) -> list[tuple[str, str]]:
+    """n 번 뽑기 → [(등급, 항목)]. guarantee: 10연 이상에서 다 가장 흔한 등급이면 마지막 장은 그보다 위 등급."""
+    rng = random.Random(seed)
+    out: list[tuple[str, str]] = []
+    for i in range(max(1, n)):
+        cand = pool
+        if (guarantee and n >= 10 and i == n - 1 and len(pool) > 1
+                and all(r == pool[-1].name for r, _ in out)):
+            cand = pool[:-1]
+        weights = [r.rate for r in cand]
+        x = rng.random() * (sum(weights) or 1.0)
+        pick = cand[-1]
+        for r, w in zip(cand, weights):
+            x -= w
+            if x < 0:
+                pick = r
+                break
+        out.append((pick.name, rng.choice(pick.items)))
+    return out
+
+
+def pool_entries(pool: list[Rarity]) -> list[Entry]:
+    """기록용: 가챠 목록을 지문을 낼 수 있는 항목들로."""
+    return [Entry(f"{r.name}:{r.rate:.4f}:{item}") for r in pool for item in r.items]
 
 
 MODE_NAMES = {"wheel": "룰렛", "raffle": "당첨자 뽑기", "ladder": "사다리", "teams": "팀 나누기",
-              "order": "순서 정하기", "dice": "주사위"}
+              "order": "순서 정하기", "dice": "주사위", "gacha": "가챠"}       # 원문 (로그용) — 화면엔 mode_name
+BLANKS = {"꽝", "통과", "패스", "はずれ", "ハズレ", "パス", "スルー", "miss", "pass", "none", "-", ""}
+
+
+def mode_name(mode: str) -> str:
+    return T(MODE_NAMES[mode]) if mode in MODE_NAMES else mode
 
 
 def is_blank(result: str) -> bool:
-    """사다리 결과가 꽝 같은 것인지."""
-    return result.strip() in ("꽝", "통과", "패스", "-", "")
+    """사다리 결과가 꽝 같은 것인지 (어느 언어로 적어도)."""
+    s = result.strip()
+    return s.lower() in BLANKS or s == T("꽝")
 
 
 def headline(mode: str, result) -> str:
@@ -258,14 +331,21 @@ def headline(mode: str, result) -> str:
         for tier, names in result:
             if names:
                 return f"{tier}: {', '.join(names)}"
-        return "당첨자 없음"
+        return T("당첨자 없음")
     if mode == "ladder":
         hits = [f"{a} → {b}" for a, b in result if not is_blank(b)]
-        return ", ".join(hits) if hits else "모두 꽝!"
+        return ", ".join(hits) if hits else T("모두 꽝!")
     if mode == "teams":
         return " / ".join(f"{t}: {', '.join(m)}" for t, m in result)
     if mode == "order":
-        return f"1번: {result[0]}" if result else ""
+        return T("1번: {name}", name=result[0]) if result else ""
+    if mode == "gacha":
+        ranks, pulls = result
+        for r in ranks:
+            got = [item for rr, item in pulls if rr == r]
+            if got:
+                return f"{r}: {', '.join(got)}"
+        return ""
     return summary(mode, result)
 
 
@@ -274,13 +354,21 @@ def summary(mode: str, result) -> str:
         return str(result[0]) if result else "-"
     if mode == "order":
         return " → ".join(f"{i + 1}.{n}" for i, n in enumerate(result))
+    if mode == "gacha":                                  # result = [등급 순서, [[등급, 항목], …]]
+        ranks, pulls = result
+        parts = []
+        for r in ranks:
+            got = [item for rr, item in pulls if rr == r]
+            if got:
+                parts.append(f"{r} " + (", ".join(got) if len(got) <= 3 else f"×{len(got)}"))
+        return " · ".join(parts)
     if mode == "ladder":
         return ", ".join(f"{a}→{b}" for a, b in result)
     if mode == "dice":
         label, values = result[0], result[1]
         text = ", ".join(str(v) for v in values)
-        if label.startswith("주사위") and len(values) > 1:
-            text += f" (합 {sum(values)})"
+        if _DICE.search(label) and len(values) > 1:                  # "주사위 2d6" 처럼 (어느 언어든)
+            text += T(" (합 {total})", total=sum(values))
         return f"{label}: {text}"
-    parts = [f"{tier} {', '.join(names) if names else '없음'}" for tier, names in result]
+    parts = [f"{tier} {', '.join(names) if names else T('없음')}" for tier, names in result]
     return " / ".join(parts)

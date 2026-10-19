@@ -13,10 +13,7 @@ from pathlib import Path
 log = logging.getLogger("Miracle.store")
 APP_DIR = "SanaeMiracle"
 MAX_HISTORY = 500
-DEFAULT_LISTS = {
-    "점심 메뉴": "김치찌개\n된장찌개\n돈가스\n짜장면\n짬뽕\n제육볶음\n비빔밥\n라멘\n초밥\n햄버거\n쌀국수\n떡볶이",
-    "예시: 가중치": "# '이름 x3' 은 세 배로 잘 뽑혀요\n치킨 x3\n피자 x2\n족발\n보쌈",
-}
+DEFAULT_LISTS: dict[str, str] = {}      # 내 목록 (기본 예시는 presets.py — 언어마다)
 
 
 def data_dir() -> Path:
@@ -40,8 +37,8 @@ class Draw:
 @dataclass
 class Settings:
     mode: str = "wheel"
-    list_name: str = "점심 메뉴"
-    text: str = DEFAULT_LISTS["점심 메뉴"]
+    list_name: str = ""
+    text: str = ""
     remove_winner: bool = False
     unique: bool = True
     exclude_last: bool = False
@@ -61,6 +58,9 @@ class Settings:
     background: str = "sky"
     hotkey: str = "off"
     obs_text: bool = False
+    gacha_pulls: int = 10
+    gacha_guarantee: bool = True
+    lang: str = "auto"
     geometry: str = ""
 
 
@@ -92,6 +92,7 @@ class Store:
                 self.history.append(Draw(**d))
             except TypeError:
                 continue
+        self.fresh = not (self.root / "settings.json").exists()     # 처음 켬
         s = _read(self.root / "settings.json", {})
         known = {k: v for k, v in s.items() if k in Settings.__dataclass_fields__}
         self.settings = Settings(**known)
@@ -116,12 +117,13 @@ class Store:
         _write(self.root / "history.json", [])
 
     def export_csv(self, path: Path) -> None:
+        from .core import mode_name, seed_text, summary
+        from .i18n import T
         with open(path, "w", encoding="utf-8-sig", newline="") as f:
             w = csv.writer(f)
-            w.writerow(["시각", "종류", "목록", "항목 수", "시드", "목록 지문", "결과"])
+            w.writerow([T("시각"), T("종류"), T("목록"), T("항목 수"), T("시드"), T("목록 지문"), T("결과")])
             for d in self.history:
-                from .core import MODE_NAMES, seed_text, summary
-                w.writerow([d.when, MODE_NAMES.get(d.mode, d.mode), d.title, d.count,
+                w.writerow([d.when, mode_name(d.mode), d.title, d.count,
                             seed_text(d.seed), d.print_, summary(d.mode, d.result)])
 
     # ── 설정 ──

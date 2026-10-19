@@ -10,6 +10,7 @@ from typing import Callable
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen, QRadialGradient
 from PySide6.QtWidgets import QWidget
+from .i18n import T, font
 
 ROLL_TIME = 1.6
 PIPS = {1: [(0, 0)], 2: [(-1, -1), (1, 1)], 3: [(-1, -1), (0, 0), (1, 1)], 4: [(-1, -1), (1, -1), (-1, 1), (1, 1)],
@@ -57,7 +58,7 @@ class DiceStage(QWidget):
 
     def _random_face(self):
         if self.kind == "coin":
-            return self.rng.choice(["앞", "뒤"])
+            return self.rng.choice([T("앞"), T("뒤")])
         if self.kind == "number":
             return self.rng.randint(min(self.lo, self.hi), max(self.lo, self.hi))
         return self.rng.randint(1, self.sides)
@@ -106,12 +107,12 @@ class DiceStage(QWidget):
                 self._die(p, r, face)
             p.restore()
         if self.phase == "done" and self.kind == "dice" and len(self.values) > 1:
-            f = QFont("Malgun Gothic")
+            f = QFont(font())
             f.setBold(True)
             f.setPixelSize(26)
             p.setFont(f)
             p.setPen(QColor("#2E9E5B"))
-            p.drawText(QRectF(0, self.height() - 64, w, 44), Qt.AlignCenter, f"합계  {sum(self.values)}")
+            p.drawText(QRectF(0, self.height() - 64, w, 44), Qt.AlignCenter, T("합계  {v1}", v1=sum(self.values)))
         p.end()
 
     def _die(self, p: QPainter, r: QRectF, face) -> None:
@@ -153,7 +154,7 @@ class DiceStage(QWidget):
 
     @staticmethod
     def _text(p: QPainter, r: QRectF, text: str, px: float, color: str) -> None:
-        f = QFont("Malgun Gothic")
+        f = QFont(font())
         f.setBold(True)
         f.setPixelSize(max(9, int(px)))
         while f.pixelSize() > 9 and QFontMetricsF(f).horizontalAdvance(text) > r.width() * 0.86:

@@ -11,6 +11,7 @@ from typing import Callable
 from PySide6.QtCore import QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
+from .i18n import T, font
 
 ROLL = 1.5            # 한 명 발표에 이름이 도는 시간 (초)
 ROLL_TOP = 2.6        # 첫 등수(1등)는 더 길게 애태움
@@ -132,17 +133,17 @@ class RaffleStage(QWidget):
         p.setBrush(g)
         p.drawPath(path)
         tier, name = self.current if self.current else ("", "")
-        f = QFont("Malgun Gothic", 13)
+        f = QFont(font(), 13)
         f.setBold(True)
         p.setFont(f)
         p.setPen(QColor("#2E9E5B"))
-        head = tier if tier else "당첨자 뽑기"
+        head = tier if tier else T("당첨자 뽑기")
         if self._total and self.phase != "idle":
             head += f"   ({max(1, self._total - len(self.queue))} / {self._total})"
         p.drawText(r.adjusted(18, 10, -18, 0), Qt.AlignLeft | Qt.AlignTop, head)
-        text = name or "준비되면 ✨ 기적을 일으키기!"
+        text = name or T("준비되면 ✨ 기적을 일으키기!")
         size = 40 if name else 18
-        f2 = QFont("Malgun Gothic")
+        f2 = QFont(font())
         f2.setBold(True)
         f2.setPixelSize(size)
         while size > 14 and QFontMetricsF(f2).horizontalAdvance(text) > r.width() - 40:
@@ -168,7 +169,7 @@ class RaffleStage(QWidget):
         rows = [(t, self.board.get(t, [])) for t in self.tiers]
         size = 15
         while size > 9:
-            f = QFont("Malgun Gothic")
+            f = QFont(font())
             f.setPixelSize(size)
             f.setBold(True)
             fm = QFontMetricsF(f)
@@ -181,7 +182,7 @@ class RaffleStage(QWidget):
         for kind, text in lines:
             if y + fm.height() > r.bottom() - 6:
                 p.setPen(QColor("#7A8B80"))
-                p.drawText(QRectF(r.left() + 20, y, r.width() - 40, fm.height()), Qt.AlignLeft, "… (결과 복사로 전체 보기)")
+                p.drawText(QRectF(r.left() + 20, y, r.width() - 40, fm.height()), Qt.AlignLeft, T("… (결과 복사로 전체 보기)"))
                 break
             p.setPen(QColor("#2E9E5B") if kind == "tier" else QColor("#22352A"))
             p.drawText(QRectF(r.left() + 20, y, r.width() - 40, fm.height() * 1.3), Qt.AlignLeft | Qt.AlignVCenter, text)
@@ -191,7 +192,7 @@ class RaffleStage(QWidget):
     def _wrap(rows, fm: QFontMetricsF, width: float) -> list[tuple[str, str]]:
         out: list[tuple[str, str]] = []
         for tier, names in rows:
-            out.append(("tier", f"🏆 {tier}  ({len(names)}명)"))
+            out.append(("tier", T("🏆 {tier}  ({v3}명)", tier=tier, v3=len(names))))
             line = ""
             for n in names:
                 piece = (", " if line else "   ") + n

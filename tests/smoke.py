@@ -10,9 +10,13 @@
 """
 from __future__ import annotations
 
+import ast
 import csv
+import importlib
 import os
 import shutil
+import string
+import subprocess
 import sys
 import tempfile
 from collections import Counter
@@ -21,7 +25,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TMP = Path(tempfile.mkdtemp(prefix="miracle_smoke_"))
 os.environ.update(APPDATA=str(TMP / "appdata"), MIRACLE_SPEED="0.04",
-                  MIRACLE_MUTE="1", MIRACLE_NO_HOTKEY="1")      # 소리를 내지 않고, 전역 단축키도 진짜로 등록하지 않음
+                  MIRACLE_MUTE="1", MIRACLE_NO_HOTKEY="1", MIRACLE_LANG="ko")   # 소리·전역 단축키 없이, 한국어로
 if os.environ.get("MIRACLE_SMOKE_SHOW") != "1":
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     os.environ.setdefault("QT_QPA_FONTDIR", "C:/Windows/Fonts")
@@ -33,6 +37,8 @@ from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox  # noqa: E
 
 from miracle import app as mapp  # noqa: E402
 from miracle import core  # noqa: E402
+from miracle import i18n  # noqa: E402
+from miracle import presets  # noqa: E402
 from miracle import sound  # noqa: E402
 from miracle import store as mstore  # noqa: E402
 from miracle import stream  # noqa: E402
@@ -208,6 +214,24 @@ def t_core2() -> None:
     check("숫자 중복 없이 (범위보다 많이 달라면 범위만큼)",
           sorted(core.roll("number", 1, 10, lo=1, hi=3, unique=True)) == [1, 2, 3])
     check("주사위 요약", core.summary("dice", ["주사위 2d6", [3, 4]]) == "주사위 2d6: 3, 4 (합 7)")
+    check("꽝 판정 (어느 언어로 적어도)", all(core.is_blank(x) for x in ("꽝", "はずれ", "Miss", " - "))
+          and not core.is_blank("당첨"))
+
+
+def t_gacha_core() -> None:
+    pool = core.parse_pool("# 주석\n[SSR 3]\na\nb\n[SR 12%]\nc\n[R]\nd\ne\n[UR 1]\n")
+    check("가챠 목록 읽기 (확률 · 남은 확률 · 빈 등급 뺌)", [(r.name, round(r.rate, 6), r.items) for r in pool]
+          == [("SSR", 3.0, ("a", "b")), ("SR", 12.0, ("c",)), ("R", 85.0, ("d", "e"))])
+    check("등급 줄이 없으면 한 등급", [(r.name, r.rate) for r in core.parse_pool("x\ny")] == [("N", 100.0)])
+    over = core.parse_pool("[A 60]\na\n[B 60]\nb")
+    check("확률 합이 100 을 넘으면 맞춤", abs(sum(r.rate for r in over) - 100) < 1e-9 and abs(over[0].rate - 50) < 1e-9)
+    check("같은 시드 → 같은 가챠", core.gacha(pool, 10, 99) == core.gacha(pool, 10, 99))
+    cnt = Counter(r for s in range(4000) for r, _ in core.gacha(pool, 1, s))
+    check("가챠 확률 (SSR 약 3%)", 2.0 < cnt["SSR"] / 40 < 4.2, dict(cnt))
+    plain = sum(all(r == "R" for r, _ in core.gacha(pool, 10, s, guarantee=False)) for s in range(1500))
+    kept = sum(all(r == "R" for r, _ in core.gacha(pool, 10, s)) for s in range(1500))
+    check("10연 보장 (전부 R 인 10연 없음 · 끄면 나옴)", kept == 0 and plain > 0, (kept, plain))
+    check("가챠 요약", core.summary("gacha", [["SSR", "R"], [["R", "d"], ["SSR", "a"]]]) == "SSR a · R d")
 
 
 LADDER_NAMES = ["레이무", "마리사", "사나에", "치르노", "사쿠야"]
@@ -318,6 +342,101 @@ def t_dice4() -> None:
           and s2.settings.teams_style == "touhou" and s2.settings.ladder_results == "당첨\n커피")
 
 
+def t_gacha() -> None:
+    win.set_mode("gacha")
+    check("가챠 무대 미리보기", win.stage.gacha.isVisible() and win.opts.currentIndex() == mapp.MODE_KEYS.index("gacha"))
+    win._gacha_sample()
+    check("가챠 예시 넣기", win.editor.toPlainText() == presets.GACHA["ko"] and "등급 3개" in win.count.text(), win.count.text())
+    win.gacha_pulls.setValue(10)
+    win.gacha_guarantee.setChecked(True)
+    win.act()
+    check("가챠 시작", win.stage.gacha.busy and "바로 결과" in win.go.text(), win.go.text())
+
+
+def t_gacha2() -> None:
+    d = store.history[0]
+    ok = d.mode == "gacha" and len(d.result[1]) == 10
+    check("가챠 기록 (10장)", ok, d.result)
+    if ok:
+        again = core.gacha(core.parse_pool(d.text), 10, d.seed, True)
+        check("시드로 다시 해 봐도 같은 카드", [list(c) for c in again] == d.result[1])
+    check("가챠 결과 줄", "🃏" in win.result.text() and "시드" in win.result.text(), win.result.text())
+    check("카드가 모두 뒤집힘", all(win.stage.gacha.opened) and not win.busy)
+    n = len(store.history)
+    win.act()
+    win.act()                                              # 진행 중에 한 번 더 → 바로 결과
+    check("진행 중 누르면 바로 결과 (가챠)", not win.stage.gacha.busy and len(store.history) == n + 1)
+    win.hist.setCurrentRow(0)
+    win._copy_result()
+    text = QGuiApplication.clipboard().text()
+    check("가챠 결과 복사", "가챠" in text and "10. [" in text, text.splitlines()[:3])
+
+
+def t_presets() -> None:
+    items = [win.list_box.itemText(i) for i in range(win.list_box.count())]
+    pre = presets.presets("ko")
+    check("기본 목록 (📦 5개)", len(pre) == 5 and all(name in items for name in pre), items[-5:])
+    gacha = list(pre)[4]
+    win._load_list(gacha)
+    check("기본 목록 불러오기", win.editor.toPlainText() == pre[gacha])
+    real_q = QMessageBox.question
+    QMessageBox.question = staticmethod(lambda *a, **k: QMessageBox.Yes)
+    win.list_box.setCurrentText(gacha)
+    win._delete_list()
+    QMessageBox.question = real_q
+    still = [win.list_box.itemText(i) for i in range(win.list_box.count())]
+    check("기본 목록은 지울 수 없음", gacha in still and "지울 수 없어요" in win.stage.sanae.bubble)
+    same = {len(presets.presets(code)) for code in ("ko", "ja", "en")} == {5}
+    lines = {code: [len(t.split("\n")) for t in presets.presets(code).values()] for code in ("ko", "ja", "en")}
+    check("언어마다 기본 목록 (캐릭터 · 작품 수가 같음)", same and len({tuple(v[:2]) for v in lines.values()}) == 1, lines)
+    hangul = [code for code in ("ja", "en") if any(any("가" <= ch <= "힣" for ch in t)
+                                                   for t in [*presets.presets(code), *presets.presets(code).values()])]
+    check("일본어 · 영어 기본 목록에 한글 없음", not hangul, hangul)
+
+
+def i18n_keys() -> set[str]:
+    """화면 글자 원문: T("…") 로 감싼 것 + 동적으로 T() 에 넣는 것 (팀 이름 · 모드 이름 · '자동')."""
+    keys: set[str] = set()
+    for f in (ROOT / "miracle").glob("*.py"):
+        if f.name.startswith("i18n_"):
+            continue
+        for node in ast.walk(ast.parse(f.read_text(encoding="utf-8"))):
+            if (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "T" and node.args
+                    and isinstance(node.args[0], ast.Constant)):
+                keys.add(node.args[0].value)
+    keys |= {name for names in core.TEAM_NAMES.values() for name in names}
+    keys |= set(core.MODE_NAMES.values())
+    keys.add(dict(i18n.LANGS)["auto"])
+    return keys
+
+
+def placeholders(s: str) -> list[str]:
+    return sorted(f for _, f, _, _ in string.Formatter().parse(s) if f)
+
+
+def t_i18n() -> None:
+    check("한국어는 원문 그대로", i18n.lang() == "ko" and i18n.T("꽝") == "꽝" and core.mode_name("gacha") == "가챠")
+    keys = i18n_keys()
+    for code in ("ja", "en"):
+        table = importlib.import_module(f"miracle.i18n_{code}").TABLE
+        miss = [k for k in keys if k not in table]
+        bad = [k for k in keys if k in table and placeholders(k) != placeholders(table[k])]
+        extra = [k for k in table if k not in keys]
+        check(f"번역 표 {code} ({len(keys)}개 · 빠짐 · 자리표시 · 남는 것 없음)", not (miss or bad or extra), (miss + bad + extra)[:3])
+    real_q = QMessageBox.question
+    QMessageBox.question = staticmethod(lambda *a, **k: QMessageBox.No)
+    win.lang_box.setCurrentIndex([k for k, _ in i18n.LANGS].index("ja"))
+    win._lang_changed(win.lang_box.currentIndex())
+    QMessageBox.question = real_q
+    check("언어 선택 저장 (다시 시작은 안 함)", mstore.Store().settings.lang == "ja" and win.isVisible())
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    for code in ("ja", "en"):
+        p = subprocess.run([sys.executable, str(ROOT / "tests" / "lang_probe.py"), code], capture_output=True,
+                           encoding="utf-8", errors="replace", timeout=180, env=env)
+        last = (p.stdout.strip().splitlines() or [""])[-1]
+        check(f"{code} 로 켜 보기 (창 · 무대 · 결과 · 기록에 한글 없음)", p.returncode == 0, last[:200] or p.stderr[-300:])
+
+
 def t_sound() -> None:
     import wave
     ok = True
@@ -385,11 +504,11 @@ def t_end() -> None:
     app.quit()
 
 
-STEPS = [(t_core, 10), (t_core2, 10), (t_wheel, 700), (t_wheel2, 50), (t_raffle, 300), (t_raffle2, 1500),
-         (t_raffle3, 1600), (t_raffle4, 50), (t_lists, 50), (t_persist, 50),
+STEPS = [(t_core, 10), (t_core2, 10), (t_gacha_core, 10), (t_wheel, 700), (t_wheel2, 50), (t_raffle, 300),
+         (t_raffle2, 1500), (t_raffle3, 1600), (t_raffle4, 50), (t_lists, 50), (t_persist, 50),
          (t_ladder, 900), (t_ladder2, 300), (t_teams, 700), (t_teams2, 50), (t_order, 600), (t_order2, 50),
-         (t_dice, 400), (t_dice2, 400), (t_dice3, 400), (t_dice4, 50), (t_sound, 50), (t_stream, 500),
-         (t_stream2, 50), (t_end, 0)]
+         (t_dice, 400), (t_dice2, 400), (t_dice3, 400), (t_dice4, 50), (t_gacha, 700), (t_gacha2, 50),
+         (t_presets, 50), (t_i18n, 50), (t_sound, 50), (t_stream, 500), (t_stream2, 50), (t_end, 0)]
 
 
 def run(i: int = 0) -> None:

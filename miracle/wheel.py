@@ -15,6 +15,7 @@ from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, 
 from PySide6.QtWidgets import QWidget
 
 from .core import Entry
+from .i18n import T, font
 
 PALETTE = ["#4CB878", "#3D7DD8", "#F2C230", "#E8657A", "#8E6CD8", "#3FB7C4",
            "#F28C38", "#7FBF3F", "#D8579A", "#5B8DEF", "#E0A23A", "#4FA3A0"]
@@ -135,11 +136,11 @@ class WheelWidget(QWidget):
         if not self.entries:
             p.setBrush(QColor("#F4FBF6"))
             p.drawEllipse(c, R, R)
-            f = QFont("Malgun Gothic", 13)
+            f = QFont(font(), 13)
             f.setBold(True)
             p.setFont(f)
             p.setPen(QColor("#5A6B60"))
-            p.drawText(QRectF(c.x() - R, c.y() - 40, 2 * R, 80), Qt.AlignCenter, "목록에 항목을 넣어 주세요")
+            p.drawText(QRectF(c.x() - R, c.y() - 40, 2 * R, 80), Qt.AlignCenter, T("목록에 항목을 넣어 주세요"))
             p.end()
             return
         rect = QRectF(c.x() - R, c.y() - R, 2 * R, 2 * R)
@@ -181,7 +182,7 @@ class WheelWidget(QWidget):
         p.setPen(QPen(QColor("#2E6B48"), 3))
         p.setBrush(hub)
         p.drawEllipse(c, R * 0.15, R * 0.15)
-        f = QFont("Malgun Gothic", max(8, int(R * 0.07)))
+        f = QFont(font(), max(8, int(R * 0.07)))
         f.setBold(True)
         p.setFont(f)
         p.setPen(QColor("#2E9E5B"))
@@ -193,7 +194,7 @@ class WheelWidget(QWidget):
         if h < 9:
             return
         px = max(9, min(int(h * 0.55), 22, int(R * 0.09)))
-        f = QFont("Malgun Gothic")
+        f = QFont(font())
         f.setPixelSize(px)
         f.setBold(True)
         fm = QFontMetricsF(f)

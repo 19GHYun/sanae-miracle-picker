@@ -15,6 +15,7 @@ from pathlib import Path
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QImage, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
+from .i18n import T, font
 
 SPRITE_DIR = Path(__file__).resolve().parent / "sprites"
 
@@ -43,8 +44,8 @@ class Sprites:
         return self.seq("idle") if kind != "idle" else [next(iter(self.frames))]
 
 
-IDLE_LINES = ["오늘은 어떤 기적이 일어날까요?", "준비되면 버튼을 눌러 주세요!", "모리야의 바람이 함께해요~"]
-SPIN_LINES = ["바람이여~ 기적을!", "에잇! 기적을 일으켜 볼게요!", "두근두근…!"]
+IDLE_LINES = [T("오늘은 어떤 기적이 일어날까요?"), T("준비되면 버튼을 눌러 주세요!"), T("모리야의 바람이 함께해요~")]
+SPIN_LINES = [T("바람이여~ 기적을!"), T("에잇! 기적을 일으켜 볼게요!"), T("두근두근…!")]
 
 
 class SanaeWidget(QWidget):
@@ -129,13 +130,19 @@ class SanaeWidget(QWidget):
         p.end()
 
     def _bubble(self, p: QPainter) -> None:
-        f = QFont("Malgun Gothic", 11)
+        f = QFont(font(), 11)
         f.setBold(True)
         fm = QFontMetricsF(f)
-        text_w = min(self.W - 40, fm.horizontalAdvance(self.bubble) + 4)
-        rect = fm.boundingRect(QRectF(0, 0, text_w, 200), Qt.TextWordWrap | Qt.AlignCenter, self.bubble)
+        left, right = 34.0, self.W - 4.0                 # 무대 안에 보이는 부분 (사나에 칸은 무대 왼쪽 밖으로 30 나가 있음)
+        text_w = min(right - left - 28, fm.horizontalAdvance(self.bubble) + 4)
+        wrap = Qt.TextWordWrap
+        rect = fm.boundingRect(QRectF(0, 0, text_w, 200), wrap | Qt.AlignCenter, self.bubble)
+        if rect.width() > text_w + 1:                     # 띄어쓸 데가 없는 긴 글(일본어 등)은 아무 데서나 줄바꿈
+            wrap = Qt.TextWrapAnywhere
+            rect = fm.boundingRect(QRectF(0, 0, text_w, 200), wrap | Qt.AlignCenter, self.bubble)
         w, h = rect.width() + 28, rect.height() + 18
-        r = QRectF(self.W / 2 - w / 2, max(4.0, self.BUBBLE_H - h - 10), w, h)
+        cx = min(right - w / 2, max(left + w / 2, self.W / 2))
+        r = QRectF(cx - w / 2, max(4.0, self.BUBBLE_H - h - 10), w, h)
         path = QPainterPath()
         path.addRoundedRect(r, 12, 12)
         tail = QPainterPath(QPointF(self.W / 2 - 8, r.bottom() - 1))
@@ -147,4 +154,4 @@ class SanaeWidget(QWidget):
         p.drawPath(path.united(tail))
         p.setFont(f)
         p.setPen(QColor("#22352A"))
-        p.drawText(r, Qt.AlignCenter | Qt.TextWordWrap, self.bubble)
+        p.drawText(r, Qt.AlignCenter | wrap, self.bubble)
