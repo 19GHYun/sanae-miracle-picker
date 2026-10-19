@@ -56,6 +56,11 @@ class Settings:
     num_lo: int = 1
     num_hi: int = 100
     num_unique: bool = True
+    sound_on: bool = True
+    sound_level: int = 1
+    background: str = "sky"
+    hotkey: str = "off"
+    obs_text: bool = False
     geometry: str = ""
 
 

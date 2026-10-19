@@ -245,6 +245,30 @@ MODE_NAMES = {"wheel": "룰렛", "raffle": "당첨자 뽑기", "ladder": "사다
               "order": "순서 정하기", "dice": "주사위"}
 
 
+def is_blank(result: str) -> bool:
+    """사다리 결과가 꽝 같은 것인지."""
+    return result.strip() in ("꽝", "통과", "패스", "-", "")
+
+
+def headline(mode: str, result) -> str:
+    """한 줄 결과 (OBS winner.txt 등)."""
+    if mode == "wheel":
+        return str(result[0]) if result else ""
+    if mode == "raffle":
+        for tier, names in result:
+            if names:
+                return f"{tier}: {', '.join(names)}"
+        return "당첨자 없음"
+    if mode == "ladder":
+        hits = [f"{a} → {b}" for a, b in result if not is_blank(b)]
+        return ", ".join(hits) if hits else "모두 꽝!"
+    if mode == "teams":
+        return " / ".join(f"{t}: {', '.join(m)}" for t, m in result)
+    if mode == "order":
+        return f"1번: {result[0]}" if result else ""
+    return summary(mode, result)
+
+
 def summary(mode: str, result) -> str:
     if mode == "wheel":
         return str(result[0]) if result else "-"

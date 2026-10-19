@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
                                QMessageBox, QPlainTextEdit, QPushButton, QSpinBox, QStackedWidget, QTabWidget,
                                QVBoxLayout, QWidget)
 
-from . import __version__, core
+from . import __version__, core, sound
 from .cutin import MiracleCutIn
 from .dice import DiceStage
 from .ladder import LadderStage, is_blank
@@ -29,6 +29,7 @@ from .lineup import OrderStage, TeamsStage
 from .raffle import RaffleStage
 from .sanae import IDLE_LINES, SPIN_LINES, SanaeWidget, Sprites
 from .store import Draw, Store, data_dir, now_text
+from .stream import BACKGROUNDS, BG_COLORS, HOTKEYS, Hotkey, StreamWindow, obs_dir, write_obs
 from .wheel import WheelWidget
 
 log = logging.getLogger("Miracle")
@@ -116,6 +117,7 @@ class Stage(QWidget):
         self.sanae = SanaeWidget(self)
         self.cutin = MiracleCutIn(self)
         self.mode = "wheel"
+        self.bg = "sky"                   # 하늘 / 크로마키 (magenta · blue · green)
 
     def set_mode(self, mode: str) -> None:
         self.mode = mode
@@ -126,12 +128,22 @@ class Stage(QWidget):
     def resizeEvent(self, _e) -> None:
         self._layout()
 
+    def set_bg(self, bg: str) -> None:
+        """하늘 / 크로마키. 크로마키일 땐 반투명 그림자를 빼서 키잉 뒤 얼룩이 안 남게."""
+        self.bg = bg
+        self.wheel.shadow = self.sanae.shadow = bg not in BG_COLORS
+        self.update()
+        self.wheel.update()
+
     def _layout(self) -> None:
         w, h = self.width(), self.height()
-        area = QRect(self.LEFT, 6, max(200, w - self.LEFT - 10), h - 12)
+        f = max(1.0, min(1.7, h / 560))                          # 무대가 크면(방송 창) 사나에도 크게
+        self.sanae.set_scale(f)
+        left = round(self.LEFT * f)
+        area = QRect(left, 6, max(200, w - left - 10), h - 12)
         for board in self.boards.values():
             board.setGeometry(area)
-        self.sanae.move(-30, h - self.sanae.height() + 2)
+        self.sanae.move(round(-30 * f), h - self.sanae.height() + 2)
         self.sanae.raise_()
         if self.cutin.isVisible():
             self.cutin.setGeometry(self.rect())
@@ -139,6 +151,10 @@ class Stage(QWidget):
 
     def paintEvent(self, _e) -> None:
         p = QPainter(self)
+        if self.bg in BG_COLORS:                                 # 크로마키: 한 가지 색으로만
+            p.fillRect(self.rect(), QColor(BG_COLORS[self.bg]))
+            p.end()
+            return
         p.setRenderHint(QPainter.Antialiasing)
         r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         path = QPainterPath()
@@ -204,6 +220,12 @@ class MainWindow(QMainWindow):
         left.addLayout(bar)
         self.stage = Stage(root)
         left.addWidget(self.stage, 1)
+        self.left = left
+        self.stream_win: StreamWindow | None = None
+        self.stage_placeholder = QLabel("📺 방송 창에서 무대를 보여 주는 중이에요\n방송 창을 닫으면 여기로 돌아와요",
+                                        objectName="hint")
+        self.stage_placeholder.setAlignment(Qt.AlignCenter)
+        self.stage_placeholder.hide()
         self.go = QPushButton(objectName="go")
         self.go.setCursor(Qt.PointingHandCursor)
         self.go.setMinimumHeight(56)
@@ -217,6 +239,7 @@ class MainWindow(QMainWindow):
         self.tabs.setFixedWidth(350)
         self.tabs.addTab(self._list_tab(), "📝 목록")
         self.tabs.addTab(self._history_tab(), "📜 기록")
+        self.tabs.addTab(self._stream_tab(), "📺 방송")
         h.addWidget(self.tabs)
         for keys in (Qt.Key_Space, "Ctrl+Return", "F5"):
             QShortcut(QKeySequence(keys), self, activated=self.act)
@@ -224,6 +247,12 @@ class MainWindow(QMainWindow):
         self.resize(1100, 740)
         if s.geometry:
             self.restoreGeometry(QByteArray.fromHex(s.geometry.encode()))
+        sound.enabled, sound.level = s.sound_on, max(0, min(2, s.sound_level))
+        self.stage.set_bg(s.background if s.background in dict(BACKGROUNDS) else "sky")
+        self.stage.raffle.on_roll = lambda secs: sound.play("drumroll", secs)
+        self.stage.teams.on_step = self.stage.order.on_step = lambda _i: sound.play("pop")
+        self.hotkey = Hotkey(self.act)
+        self._set_hotkey(s.hotkey if s.hotkey in dict(HOTKEYS) else "off")
         self.set_mode(self.mode)
         self._text_changed()
         self._refresh_history()
@@ -698,13 +727,14 @@ class MainWindow(QMainWindow):
 
     def _spin(self, entries: list[core.Entry]) -> None:
         if not entries:
-            self.stage.sanae.set_mode("oops", "목록이 비어 있어요! 오른쪽에 적어 주세요.", 3.0)
+            self._oops("목록이 비어 있어요! 오른쪽에 적어 주세요.")
             return
         seed = core.new_seed()
         idx, frac = core.spin(entries, seed)
         self.stage.wheel.set_entries(entries)
         self.stage.sanae.set_mode("spin", random.choice(SPIN_LINES), 2.5)
         self.stage.wheel.spin_to(idx, frac, WHEEL_SECONDS * SPEED, lambda i: self._spun(entries, i, seed))
+        sound.play("spin", WHEEL_SECONDS * SPEED, self.stage.wheel.ticks)
         self._update_go()
         log.info("룰렛: %d개, 시드 %s", len(entries), core.seed_text(seed))
 
@@ -715,7 +745,8 @@ class MainWindow(QMainWindow):
         self.store.add(d)
         self._refresh_history()
         self.stage.sanae.set_mode("happy", f"「{name}」! 기적이에요!", 5.5)
-        self.stage.cutin.play("✨ 기적 발생! ✨", name, SPEED, hide=self.stage.sanae)
+        self._miracle("✨ 기적 발생! ✨", name)
+        self._obs("wheel", [name])
         self.result.setText(f"🎡 결과: <b>{name}</b>   ·   {len(entries)}개 중   ·   시드 {core.seed_text(seed)}")
         if self.remove_winner.isChecked():                       # 뽑힌 줄 하나 빼기 (바퀴는 다음에 돌릴 때 바뀜)
             lines = text.split("\n")
@@ -737,14 +768,14 @@ class MainWindow(QMainWindow):
     def _draw(self, entries: list[core.Entry]) -> None:
         tiers = self.tiers()
         if not entries or not tiers:
-            self.stage.sanae.set_mode("oops", "목록이나 등수가 비어 있어요!" if not entries else "등수의 인원을 정해 주세요!", 3.0)
+            self._oops("목록이나 등수가 비어 있어요!" if not entries else "등수의 인원을 정해 주세요!")
             return
         exclude = self._last_winners() if self.exclude_last.isChecked() else set()
         seed = core.new_seed()
         results = core.raffle(entries, tiers, seed, self.unique.isChecked(), exclude)
         order = core.reveal_order(results)
         if not order:
-            self.stage.sanae.set_mode("oops", "뽑을 수 있는 사람이 없어요…", 3.0)
+            self._oops("뽑을 수 있는 사람이 없어요…")
             return
         self._pending = (entries, results, seed, self.editor.toPlainText())
         self.stage.sanae.set_mode("spin", "누가 뽑힐까요…!", 2.0)
@@ -755,10 +786,11 @@ class MainWindow(QMainWindow):
 
     def _revealed(self, tier: str, name: str, n: int, total: int) -> None:
         if n == total:
-            self.stage.cutin.play(f"✨ {tier} — 기적 발생! ✨", name, SPEED, hide=self.stage.sanae)
+            self._miracle(f"✨ {tier} — 기적 발생! ✨", name)
             self.stage.sanae.set_mode("happy", f"{tier}은(는) 「{name}」! 축하해요!", 4.0)
         else:
             self.stage.sanae.set_mode("happy", f"{tier}: 「{name}」!", 2.5)
+            sound.play("win")
         self._update_go()
 
     def _raffle_done(self) -> None:
@@ -766,6 +798,7 @@ class MainWindow(QMainWindow):
         d = Draw(now_text(), "raffle", self._title(), len(entries), seed, core.fingerprint(entries), results, text)
         self.store.add(d)
         self._refresh_history()
+        self._obs("raffle", results)
         self.result.setText(f"🎫 {core.summary('raffle', results)}   ·   {len(entries)}명 중   ·   시드 {core.seed_text(seed)}")
         QTimer.singleShot(0, self._update_go)
         log.info("당첨자 뽑기 결과: %s", core.summary("raffle", results))
@@ -773,6 +806,7 @@ class MainWindow(QMainWindow):
     def _record(self, mode: str, title: str, count: int, seed: int, entries: list[core.Entry], result, text: str) -> None:
         self.store.add(Draw(now_text(), mode, title, count, seed, core.fingerprint(entries), result, text))
         self._refresh_history()
+        self._obs(mode, result)
         self.result.setText(f"{MODE_ICONS[mode]} {core.summary(mode, result)}   ·   시드 {core.seed_text(seed)}")
         QTimer.singleShot(0, self._update_go)
         log.info("%s 결과: %s", core.MODE_NAMES[mode], core.summary(mode, result))
@@ -781,7 +815,7 @@ class MainWindow(QMainWindow):
     def _ladder(self, entries: list[core.Entry]) -> None:
         names = core.names_of(entries)
         if not 2 <= len(names) <= core.LADDER_MAX:
-            self.stage.sanae.set_mode("oops", f"사다리는 2~{core.LADDER_MAX}명이 탈 수 있어요!", 3.0)
+            self._oops(f"사다리는 2~{core.LADDER_MAX}명이 탈 수 있어요!")
             return
         bottom = core.ladder_results(self.ladder_text.toPlainText(), len(names))
         seed = core.new_seed()
@@ -794,24 +828,26 @@ class MainWindow(QMainWindow):
     def _ladder_step(self, name: str, result: str) -> None:
         if is_blank(result):
             self.stage.sanae.say(f"{name}: {result}", 1.6)
+            sound.play("pop")
         else:
             self.stage.sanae.set_mode("happy", f"「{name}」 → {result}!", 2.5)
+            sound.play("win")
 
     def _ladder_done(self) -> None:
         entries, seed, text, names, bottom, lad = self._pending
         pairs = [[names[s], bottom[lad.end_of(s)]] for s in range(len(names))]
         hits = [(a, b) for a, b in pairs if not is_blank(b)]
         if len(hits) == 1:
-            self.stage.cutin.play("✨ 사다리 결과 ✨", f"{hits[0][0]} → {hits[0][1]}", SPEED, hide=self.stage.sanae)
+            self._miracle("✨ 사다리 결과 ✨", f"{hits[0][0]} → {hits[0][1]}")
         else:
-            self.stage.cutin.play("✨ 사다리 완료 ✨", "모두 공개!", SPEED, hide=self.stage.sanae)
+            self._miracle("✨ 사다리 완료 ✨", "모두 공개!")
         self._record("ladder", self._title(), len(names), seed, entries, pairs, text)
 
     # ── 팀 나누기 ──
     def _teams(self, entries: list[core.Entry]) -> None:
         names = core.names_of(entries)
         if len(names) < 2:
-            self.stage.sanae.set_mode("oops", "두 명 이상 적어 주세요!", 3.0)
+            self._oops("두 명 이상 적어 주세요!")
             return
         n = min(self.teams_count.value(), len(names))
         seed = core.new_seed()
@@ -824,13 +860,13 @@ class MainWindow(QMainWindow):
     def _teams_done(self) -> None:
         entries, seed, text, result = self._pending
         self.stage.sanae.set_mode("happy", "팀이 정해졌어요! 다들 힘내요~", 4.0)
-        self.stage.cutin.play("✨ 팀 나누기 완료 ✨", f"{len(result)}팀 · {len(entries)}명", SPEED, hide=self.stage.sanae)
+        self._miracle("✨ 팀 나누기 완료 ✨", f"{len(result)}팀 · {len(entries)}명")
         self._record("teams", self._title(), len(entries), seed, entries, [[t, list(m)] for t, m in result], text)
 
     # ── 순서 정하기 ──
     def _order(self, entries: list[core.Entry]) -> None:
         if len(entries) < 2:
-            self.stage.sanae.set_mode("oops", "두 명 이상 적어 주세요!", 3.0)
+            self._oops("두 명 이상 적어 주세요!")
             return
         seed = core.new_seed()
         result = core.order(entries, seed)
@@ -842,7 +878,7 @@ class MainWindow(QMainWindow):
     def _order_done(self) -> None:
         entries, seed, text, result = self._pending
         self.stage.sanae.set_mode("happy", f"1번은 「{result[0]}」!", 4.0)
-        self.stage.cutin.play("✨ 1번은… ✨", result[0], SPEED, hide=self.stage.sanae)
+        self._miracle("✨ 1번은… ✨", result[0])
         self._record("order", self._title(), len(entries), seed, entries, result, text)
 
     # ── 주사위 · 동전 · 숫자 ──
@@ -854,6 +890,7 @@ class MainWindow(QMainWindow):
         self._pending = (seed, label, values, kind)
         self.stage.sanae.set_mode("spin", {"coin": "던져 볼게요~!", "number": "숫자를 뽑아 볼게요!"}.get(kind, "굴려 볼게요~!"), 2.0)
         self.stage.dice.start(kind, values, sides, lo, hi, self._dice_done, SPEED)
+        sound.play("rattle", 1.6 * SPEED)
         self._update_go()
 
     def _dice_done(self) -> None:
@@ -865,7 +902,7 @@ class MainWindow(QMainWindow):
         else:
             big = ", ".join(str(v) for v in values)
         self.stage.sanae.set_mode("happy", f"{big}! 기적이에요~", 4.0)
-        self.stage.cutin.play(f"✨ {label} ✨", big, SPEED, hide=self.stage.sanae, burst=60)
+        self._miracle(f"✨ {label} ✨", big, burst=60, sound_name="coin" if kind == "coin" else "fanfare")
         self._record("dice", label, len(values), seed, [], [label, values], "")
 
     # ── 설정 저장 ──
@@ -887,11 +924,161 @@ class MainWindow(QMainWindow):
         s.teams_style = self.teams_style.currentData()
         s.dice_kind, s.dice_count, s.dice_sides, s.num_lo, s.num_hi, s.num_unique = self._dice_spec()
         s.geometry = bytes(self.saveGeometry().toHex()).decode()
+        s.sound_on = self.sound_on.isChecked()
+        s.sound_level = self.sound_level.currentIndex()
+        s.background = self.bg_box.currentData()
+        s.hotkey = self.hotkey_box.currentData()
+        s.obs_text = self.obs_on.isChecked()
         self.store.save_settings()
 
     def closeEvent(self, e) -> None:
         self._save_settings()
+        if self.stream_win is not None:
+            self.stream_win.close()
+        self.hotkey.clear()
+        sound.stop()
         super().closeEvent(e)
+
+    # ── 연출 · 효과음 ──
+    def _miracle(self, title: str, text: str, burst: int = 90, sound_name: str = "fanfare") -> None:
+        sound.play(sound_name)
+        self.stage.cutin.play(title, text, SPEED, burst=burst, hide=self.stage.sanae)
+
+    def _oops(self, text: str) -> None:
+        self.stage.sanae.set_mode("oops", text, 3.0)
+        sound.play("boop")
+
+    # ── 방송 ──
+    def _stream_tab(self) -> QWidget:
+        s = self.store.settings
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(12, 12, 12, 12)
+        v.setSpacing(6)
+
+        def hint(text: str) -> None:
+            lab = QLabel(text, objectName="hint")
+            lab.setWordWrap(True)
+            v.addWidget(lab)
+        v.addWidget(QLabel("<b>🔊 효과음</b>"))
+        row = QHBoxLayout()
+        self.sound_on = QCheckBox("효과음 내기")
+        self.sound_on.setChecked(s.sound_on)
+        self.sound_on.toggled.connect(self._sound_changed)
+        self.sound_level = QComboBox()
+        self.sound_level.addItems(["작게", "보통", "크게"])
+        self.sound_level.setCurrentIndex(max(0, min(2, s.sound_level)))
+        self.sound_level.currentIndexChanged.connect(self._sound_changed)
+        listen = QPushButton("▶ 들어보기", objectName="small")
+        listen.setCursor(Qt.PointingHandCursor)
+        listen.clicked.connect(lambda: sound.play("fanfare"))
+        row.addWidget(self.sound_on)
+        row.addWidget(self.sound_level)
+        row.addWidget(listen)
+        row.addStretch(1)
+        v.addLayout(row)
+        v.addSpacing(6)
+        v.addWidget(QLabel("<b>🎨 무대 배경</b>"))
+        self.bg_box = QComboBox()
+        for key, label in BACKGROUNDS:
+            self.bg_box.addItem(label, key)
+        self.bg_box.setCurrentIndex([k for k, _ in BACKGROUNDS].index(s.background) if s.background in dict(BACKGROUNDS) else 0)
+        self.bg_box.currentIndexChanged.connect(self._bg_changed)
+        v.addWidget(self.bg_box)
+        hint("OBS 의 크로마 키 필터로 배경을 지울 수 있어요. 사나에 머리가 초록이라 자홍·파랑을 추천해요.")
+        v.addSpacing(6)
+        v.addWidget(QLabel("<b>📺 방송 창</b>"))
+        self.stream_btn = QPushButton("📺 무대만 따로 띄우기", objectName="small")
+        self.stream_btn.setCursor(Qt.PointingHandCursor)
+        self.stream_btn.clicked.connect(self.toggle_stream)
+        v.addWidget(self.stream_btn, 0, Qt.AlignLeft)
+        hint("무대만 큰 창으로 띄워요 (OBS 창 캡처용). 조작은 이 창에서 하고, 방송 창에서도 Space 로 진행돼요.")
+        v.addSpacing(6)
+        v.addWidget(QLabel("<b>⌨ 전역 단축키</b>  (다른 창을 보고 있어도)"))
+        row2 = QHBoxLayout()
+        self.hotkey_box = QComboBox()
+        for key, label in HOTKEYS:
+            self.hotkey_box.addItem(label, key)
+        self.hotkey_box.setCurrentIndex([k for k, _ in HOTKEYS].index(s.hotkey) if s.hotkey in dict(HOTKEYS) else 0)
+        self.hotkey_box.currentIndexChanged.connect(lambda _i: self._set_hotkey(self.hotkey_box.currentData()))
+        self.hotkey_state = QLabel(objectName="hint")
+        row2.addWidget(self.hotkey_box)
+        row2.addWidget(self.hotkey_state, 1)
+        v.addLayout(row2)
+        hint("게임·방송 프로그램을 보고 있을 때도 이 키로 바로 기적을 일으켜요. 누른 키는 기록하지 않아요.")
+        v.addSpacing(6)
+        v.addWidget(QLabel("<b>📝 OBS 텍스트</b>"))
+        self.obs_on = QCheckBox("결과를 텍스트 파일로 내보내기")
+        self.obs_on.setChecked(s.obs_text)
+        self.obs_on.toggled.connect(self._queue_save)
+        v.addWidget(self.obs_on)
+        path = QLabel("%APPDATA%\\SanaeMiracle\\obs  (winner.txt · result.txt)", objectName="hint")
+        path.setToolTip(str(obs_dir()))
+        path.setWordWrap(True)
+        path.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        v.addWidget(path)
+        open_btn = QPushButton("📁 폴더 열기", objectName="small")
+        open_btn.setCursor(Qt.PointingHandCursor)
+        open_btn.clicked.connect(self._open_obs_dir)
+        v.addWidget(open_btn, 0, Qt.AlignLeft)
+        hint("OBS 텍스트 소스 → '파일에서 읽기' 로 winner.txt(한 줄 결과) 또는 result.txt(자세히)를 고르세요. "
+             "추첨이 끝날 때마다 바뀌어요.")
+        v.addStretch(1)
+        return w
+
+    def _sound_changed(self, *_a) -> None:
+        sound.enabled = self.sound_on.isChecked()
+        sound.level = self.sound_level.currentIndex()
+        self._queue_save()
+
+    def _bg_changed(self, *_a) -> None:
+        self.stage.set_bg(self.bg_box.currentData())
+        self._queue_save()
+
+    def _set_hotkey(self, key: str) -> None:
+        ok = self.hotkey.set(key)
+        self.hotkey_state.setText("" if key == "off" else ("✔ 등록됐어요" if ok else "✖ 다른 프로그램이 이미 쓰고 있어요"))
+        self._queue_save()
+
+    def toggle_stream(self) -> None:
+        if self.stream_win is not None:
+            self.stream_win.close()
+            return
+        self.stream_win = StreamWindow(self._stream_closed, self.act)
+        idx = self.left.indexOf(self.stage)
+        self.left.removeWidget(self.stage)
+        self.left.insertWidget(idx, self.stage_placeholder, 1)
+        self.stage_placeholder.show()
+        self.stream_win.box.addWidget(self.stage)
+        self.stage.show()
+        self.stream_win.setWindowIcon(app_icon())
+        self.stream_win.show()
+        self.stream_btn.setText("↩ 무대 되돌리기")
+        log.info("방송 창 열기")
+
+    def _stream_closed(self) -> None:
+        self.stream_win = None
+        idx = self.left.indexOf(self.stage_placeholder)
+        self.left.removeWidget(self.stage_placeholder)
+        self.stage_placeholder.hide()
+        self.left.insertWidget(idx, self.stage, 1)
+        self.stage.show()
+        self.stream_btn.setText("📺 무대만 따로 띄우기")
+        log.info("방송 창 닫기")
+
+    def _obs(self, mode: str, result) -> None:
+        if not self.obs_on.isChecked() or not self.store.history:
+            return
+        try:
+            write_obs(core.headline(mode, result), self.draw_text(self.store.history[0]))
+        except OSError:
+            log.warning("OBS 텍스트 쓰기 실패", exc_info=True)
+
+    def _open_obs_dir(self) -> None:
+        d = obs_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        if sys.platform == "win32":
+            os.startfile(str(d))
 
 
 def _setup_logging() -> None:

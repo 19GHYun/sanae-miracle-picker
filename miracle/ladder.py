@@ -10,17 +10,13 @@ from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
 
-from .core import Ladder
+from .core import Ladder, is_blank
 
 COLORS = ["#E8657A", "#3D7DD8", "#2E9E5B", "#F2A230", "#8E6CD8", "#3FB7C4", "#D8579A", "#7FBF3F",
           "#F28C38", "#5B8DEF", "#C9A030", "#4FA3A0"]
 DRAW_TIME = 0.9       # 가로줄이 깔리는 시간
 TRACE_TIME = 1.3      # 한 명이 내려가는 시간
 GAP_TIME = 0.35
-
-
-def is_blank(result: str) -> bool:
-    return result.strip() in ("꽝", "통과", "패스", "-", "")
 
 
 class LadderStage(QWidget):

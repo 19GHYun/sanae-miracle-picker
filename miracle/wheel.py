@@ -40,6 +40,8 @@ class WheelWidget(QWidget):
         self._target = -1
         self._under = -1
         self._won_at = 0.0
+        self.ticks: list[float] = []      # 이번 회전에서 바늘이 칸을 넘는 순간들
+        self.shadow = True
         self.timer = QTimer(self, timeout=self._tick, interval=16)
 
     # ── 목록 ──
@@ -76,9 +78,25 @@ class WheelWidget(QWidget):
         self._from, self._to = self.rot, self.rot + delta
         self._start, self._dur = time.monotonic(), max(0.05, seconds)
         self._done, self._target = done, idx
+        self.ticks = self._tick_times()
         self.spinning, self.winner = True, None
         self._under = self.under_pointer()
         self.timer.start()
+
+    def _tick_times(self) -> list[float]:
+        """바늘이 칸 경계를 넘는 순간들 (초) — 틱 소리를 미리 한 파일로 만들려고."""
+        bounds = [a for a, _ in self.spans()]
+        out: list[float] = []
+        steps = int(self._dur * 500)
+        last = None
+        for k in range(steps + 1):
+            t = self._dur * k / steps
+            at = (-(self._from + (self._to - self._from) * ease_out(t / self._dur))) % 360.0
+            idx = sum(1 for b in bounds if b <= at) - 1
+            if last is not None and idx != last and (not out or t - out[-1] > 0.012):
+                out.append(t)
+            last = idx
+        return out
 
     def _tick(self) -> None:
         u = min(1.0, (time.monotonic() - self._start) / self._dur)
@@ -108,9 +126,10 @@ class WheelWidget(QWidget):
         if R < 40:
             p.end()
             return
-        p.setPen(Qt.NoPen)                                            # 그림자
-        p.setBrush(QColor(0, 0, 0, 35))
-        p.drawEllipse(QPointF(c.x() + 4, c.y() + 8), R + 12, R + 12)
+        p.setPen(Qt.NoPen)
+        if self.shadow:                                               # 그림자 (크로마키일 땐 없음)
+            p.setBrush(QColor(0, 0, 0, 35))
+            p.drawEllipse(QPointF(c.x() + 4, c.y() + 8), R + 12, R + 12)
         p.setBrush(QColor("#2E6B48"))                                 # 테두리
         p.drawEllipse(c, R + 12, R + 12)
         if not self.entries:

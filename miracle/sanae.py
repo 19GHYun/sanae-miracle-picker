@@ -65,8 +65,16 @@ class SanaeWidget(QWidget):
         self.bubble = ""
         self.bubble_until = 0.0
         self.blink_at = time.monotonic() + 3.0
+        self.f = 1.0                     # 크기 배율 (방송 창처럼 무대가 크면 같이 커짐)
+        self.shadow = True               # 크로마키일 땐 반투명 그림자를 안 그림
         self.timer = QTimer(self, timeout=self.update, interval=50)
         self.timer.start()
+
+    def set_scale(self, f: float) -> None:
+        if abs(f - self.f) > 0.01:
+            self.f = f
+            self.setFixedSize(round(self.W * f), round(self.H * f))
+            self.update()
 
     def set_mode(self, mode: str, line: str | None = None, seconds: float = 3.0) -> None:
         self.mode, self.mode_at = mode, time.monotonic()
@@ -108,11 +116,13 @@ class SanaeWidget(QWidget):
         p.setRenderHint(QPainter.SmoothPixmapTransform)
         name, dy = self.frame()
         img, anchor = self.sp.frames[name]
+        p.scale(self.f, self.f)
         k = self.k
         fx, fy = self.W / 2, self.H - 10
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor(0, 0, 0, 40))
-        p.drawEllipse(QRectF(fx - 46, fy - 7, 92, 14))
+        if self.shadow:
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(0, 0, 0, 40))
+            p.drawEllipse(QRectF(fx - 46, fy - 7, 92, 14))
         p.drawImage(QRectF(fx - anchor.x() * k, fy + dy - anchor.y() * k, img.width() * k, img.height() * k), img)
         if self.bubble and time.monotonic() < self.bubble_until:
             self._bubble(p)

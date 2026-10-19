@@ -20,7 +20,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TMP = Path(tempfile.mkdtemp(prefix="miracle_smoke_"))
-os.environ.update(APPDATA=str(TMP / "appdata"), MIRACLE_SPEED="0.04")
+os.environ.update(APPDATA=str(TMP / "appdata"), MIRACLE_SPEED="0.04",
+                  MIRACLE_MUTE="1", MIRACLE_NO_HOTKEY="1")      # 소리를 내지 않고, 전역 단축키도 진짜로 등록하지 않음
 if os.environ.get("MIRACLE_SMOKE_SHOW") != "1":
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     os.environ.setdefault("QT_QPA_FONTDIR", "C:/Windows/Fonts")
@@ -32,7 +33,9 @@ from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox  # noqa: E
 
 from miracle import app as mapp  # noqa: E402
 from miracle import core  # noqa: E402
+from miracle import sound  # noqa: E402
 from miracle import store as mstore  # noqa: E402
+from miracle import stream  # noqa: E402
 
 RESULTS: list[tuple[str, bool, str]] = []
 G: dict = {}
@@ -97,6 +100,8 @@ def t_wheel2() -> None:
         check("뽑힌 항목은 목록에서 빠짐", d.result[0] not in left and len(left) == 2, left)
     check("끝나면 버튼이 돌아옴", win.go.isEnabled() and not win.busy and "기적을 일으키기" in win.go.text())
     check("결과 줄", "결과" in win.result.text() and "시드" in win.result.text())
+    check("룰렛 효과음 (틱 → 팡파르)", "spin" in sound.played and "fanfare" in sound.played
+          and len(win.stage.wheel.ticks) >= 3, len(win.stage.wheel.ticks))
     win.editor.setPlainText("")
     win.act()
     check("빈 목록이면 사나에가 알려 줌", win.stage.sanae.mode == "oops" and not win.busy)
@@ -313,14 +318,78 @@ def t_dice4() -> None:
           and s2.settings.teams_style == "touhou" and s2.settings.ladder_results == "당첨\n커피")
 
 
+def t_sound() -> None:
+    import wave
+    ok = True
+    for name, secs in [*[(n, 1.0) for n in sound.STATIC], ("drumroll", 1.5), ("rattle", 1.6)]:
+        path = sound.render(name, secs)
+        with wave.open(str(path), "rb") as w:
+            ok = ok and w.getframerate() == sound.RATE and w.getnframes() > sound.RATE * 0.08
+    spin = sound.render("spin", 2.0, [0.1, 0.3, 0.6, 1.0])
+    with wave.open(str(spin), "rb") as w:
+        ok = ok and w.getnframes() >= sound.RATE * 2
+    check("효과음 합성 (팡파르·딩·드럼롤·주사위·틱 …)", ok)
+    check("효과음 기록 (당첨자 드럼롤 · 오류 머쓱)", "drumroll" in sound.played and "boop" in sound.played)
+
+
+def t_stream() -> None:
+    win.set_mode("wheel")
+    win.bg_box.setCurrentIndex([k for k, _ in stream.BACKGROUNDS].index("magenta"))
+    img = win.stage.grab().toImage()
+    check("크로마키 배경 (자홍)", img.pixelColor(4, 4).name() == "#ff00ff", img.pixelColor(4, 4).name())
+    win.bg_box.setCurrentIndex(0)
+    win.toggle_stream()
+    sw = win.stream_win
+    check("방송 창 열기 (무대가 옮겨 감)", sw is not None and win.stage.parent() is sw and win.stage_placeholder.isVisible())
+    win.toggle_stream()
+    check("방송 창 닫기 (무대가 돌아옴)", win.stream_win is None and win.stage.parent() is not sw
+          and not win.stage_placeholder.isVisible() and win.left.indexOf(win.stage) >= 0)
+    win.hotkey_box.setCurrentIndex([k for k, _ in stream.HOTKEYS].index("ctrl_alt_m"))
+    check("전역 단축키 선택", win.hotkey.key == "ctrl_alt_m" and "등록" in win.hotkey_state.text())
+    import ctypes
+    from ctypes import wintypes
+    G["hot"] = 0
+    real_cb = win.hotkey.filter.callback
+    win.hotkey.filter.callback = lambda: G.__setitem__("hot", G["hot"] + 1)
+    msg = wintypes.MSG()
+    msg.message, msg.wParam = stream.WM_HOTKEY, stream.HOTKEY_ID
+    took = win.hotkey.filter.nativeEventFilter(b"windows_generic_MSG", ctypes.addressof(msg))
+    other = wintypes.MSG()
+    other.message = 0x0100
+    passed = win.hotkey.filter.nativeEventFilter(b"windows_generic_MSG", ctypes.addressof(other))
+    check("전역 단축키 메시지만 받음", took[0] and not passed[0])
+    G["real_cb"] = real_cb
+    win.obs_on.setChecked(True)
+    win.set_mode("dice")
+    win.dice_kind.setCurrentIndex(0)
+    win.dice_count.setValue(2)
+    win.act()
+
+
+def t_stream2() -> None:
+    check("단축키를 누르면 기적 (콜백 호출)", G["hot"] == 1)
+    win.hotkey.filter.callback = G["real_cb"]
+    winner = stream.obs_dir() / "winner.txt"
+    result = stream.obs_dir() / "result.txt"
+    ok = winner.exists() and result.exists()
+    text = winner.read_text(encoding="utf-8-sig") if ok else ""
+    check("OBS 텍스트 파일 (winner · result)", ok and text.startswith("주사위 2d6") and "시드" in result.read_text(encoding="utf-8-sig"),
+          text)
+    win._save_settings()
+    s2 = mstore.Store()
+    check("방송 설정 저장", s2.settings.obs_text and s2.settings.hotkey == "ctrl_alt_m" and s2.settings.background == "sky")
+
+
 def t_end() -> None:
+    win.hotkey.clear()
     app.quit()
 
 
 STEPS = [(t_core, 10), (t_core2, 10), (t_wheel, 700), (t_wheel2, 50), (t_raffle, 300), (t_raffle2, 1500),
          (t_raffle3, 1600), (t_raffle4, 50), (t_lists, 50), (t_persist, 50),
          (t_ladder, 900), (t_ladder2, 300), (t_teams, 700), (t_teams2, 50), (t_order, 600), (t_order2, 50),
-         (t_dice, 400), (t_dice2, 400), (t_dice3, 400), (t_dice4, 50), (t_end, 0)]
+         (t_dice, 400), (t_dice2, 400), (t_dice3, 400), (t_dice4, 50), (t_sound, 50), (t_stream, 500),
+         (t_stream2, 50), (t_end, 0)]
 
 
 def run(i: int = 0) -> None:

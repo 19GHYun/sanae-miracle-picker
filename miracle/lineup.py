@@ -48,6 +48,7 @@ class _Reveal(QWidget):
         self._step = self.STEP
         self._t0 = 0.0
         self._on_done: Callable[[], None] | None = None
+        self.on_step: Callable[[int], None] | None = None     # 한 명 더 나올 때 — 뿅
         self.timer = QTimer(self, timeout=self._tick, interval=30)
 
     @property
@@ -73,7 +74,10 @@ class _Reveal(QWidget):
             self._on_done()
 
     def _tick(self) -> None:
+        before = self.shown
         self.shown = min(self.total, int((time.monotonic() - self._t0) / (self._step * self.speed)) + 1)
+        if self.shown > before and self.on_step:
+            self.on_step(self.shown)
         if self.shown >= self.total and time.monotonic() - self._t0 > (self.total * self._step + 0.4) * self.speed:
             self._finish()
             return

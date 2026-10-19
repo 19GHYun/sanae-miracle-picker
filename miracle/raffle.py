@@ -36,6 +36,7 @@ class RaffleStage(QWidget):
         self._on_each: Callable[[str, str, int, int], None] | None = None
         self._on_done: Callable[[], None] | None = None
         self._total = 0
+        self.on_roll: Callable[[float], None] | None = None   # 이름이 돌기 시작할 때 (초) — 드럼롤
         self.rng = random.Random()
         self.timer = QTimer(self, timeout=self._tick, interval=30)
 
@@ -77,6 +78,8 @@ class RaffleStage(QWidget):
         self._roll_start = time.monotonic()
         self._next_swap = 0.0
         self.timer.start()
+        if self.on_roll:
+            self.on_roll(self._roll * self.speed)
 
     def stop(self) -> None:
         self.timer.stop()
