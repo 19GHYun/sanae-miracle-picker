@@ -25,6 +25,23 @@ TABLE: dict[str, str] = {
     "숫자 뽑기": "Random number",
     "언어 (자동 = 시스템 언어 · 바꾸면 다시 시작해요)": "Language (Auto = system language · the app restarts when changed)",
     "자동": "Auto",
+    "정보 · 도움말 (F1)": "About · Help (F1)",
+    "정보": "About",
+    "📁 데이터 폴더 열기": "📁 Open data folder",
+    "닫기": "Close",
+    "모리야 신사의 무녀 코치야 사나에가 기적을 일으켜 뽑아 주는 추첨 프로그램이에요.":
+        "A picker where Sanae Kochiya, shrine maiden of the Moriya Shrine, works a miracle to draw for you.",
+    "공정성": "Fairness",
+    "모든 추첨은 운영체제의 안전한 난수로 만든 시드 하나로 정해지고 기록에 남아요. 같은 목록 · 같은 시드면 언제 다시 해도 같은 결과예요.":
+        "Every draw is decided by one seed from the OS's secure random generator and saved in the history. Same list + same seed = same result, any time.",
+    "단축키": "Shortcuts",
+    "기적을 일으키기 · 다음 발표 · 바로 결과": "make a miracle · next reveal · skip to the result",
+    "개인정보": "Privacy",
+    "인터넷을 쓰지 않아요. 목록 · 기록 · 설정은 이 PC 의 데이터 폴더에만 저장돼요.":
+        "No internet is used. Lists, history and settings are saved only in the data folder on this PC.",
+    "새 버전 · 사용법 · 문의": "new versions · how to use · contact",
+    "동방 프로젝트(상하이 앨리스 환악단)의 비공식 2차 창작입니다. 소스 코드는 MIT 라이선스.":
+        "Unofficial fan work of the Touhou Project (Team Shanghai Alice). Source code under the MIT License.",
     "언어를 바꾸려면 다시 시작해야 해요. 지금 다시 시작할까요?": "Changing the language needs a restart. Restart now?",
     "📺 방송 창에서 무대를 보여 주는 중이에요\n방송 창을 닫으면 여기로 돌아와요":
         "📺 The stage is showing in the stream window\nClose that window to bring it back here",
@@ -38,8 +55,10 @@ TABLE: dict[str, str] = {
     "이 이름으로 저장 (덮어쓰기)": "Save under this name (overwrite)",
     "새 이름으로 저장": "Save as a new list",
     "이 목록 지우기": "Delete this list",
-    "한 줄에 하나씩 적어 주세요\n\n사나에\n레이무 x2   ← 두 배로 잘 뽑혀요\n마리사\n\n엑셀에서 복사해 붙여도 되고,\n한 줄에 쉼표로 적어도 돼요 (짜장, 짬뽕, 볶음밥)":
-        "One item per line\n\nSanae\nReimu x2   ← twice as likely\nMarisa\n\nYou can paste from Excel,\nor write one line with commas (pizza, ramen, tacos)",
+    "한 줄에 하나씩 적어 주세요\n\n사나에\n레이무 x2   ← 두 배로 잘 뽑혀요\n마리사\n\n엑셀에서 복사해 붙여도 되고,\n한 줄에 쉼표로 적어도 돼요 (짜장, 짬뽕, 볶음밥)\n\ntxt · csv 파일을 여기로 끌어다 놓아도 돼요":
+        "One item per line\n\nSanae\nReimu x2   ← twice as likely\nMarisa\n\nYou can paste from Excel,\nor write one line with commas (pizza, ramen, tacos)\n\nYou can also drop a txt or csv file here",
+    "이 파일은 읽을 수 없어요 (5MB 이하의 txt · csv)": "Can't read this file (txt or csv, up to 5 MB)",
+    "「{name}」 불러왔어요!": "Loaded \"{name}\"!",
     "🔀 섞기": "🔀 Shuffle",
     "가나다순": "Sort A–Z",
     "중복 제거": "Remove duplicates",
@@ -95,6 +114,7 @@ TABLE: dict[str, str] = {
     "목록을 섞어서 1번부터 한 명씩 불러 줘요.\n발표 순서 · 게임 차례 · 청소 당번 정하기에.":
         "Shuffles the list and calls names from No. 1.\nFor presentation order, turn order, chore duty…",
     "{k}번": "No. {k}",
+    "… 앞의 {n}명": "… {n} more above",
     "1번: {name}": "No. 1: {name}",
     "✨ 기적을 일으키면 1번부터 불러 줄게요": "✨ Make a miracle and I'll call from No. 1",
     "하쿠레이": "Hakurei",

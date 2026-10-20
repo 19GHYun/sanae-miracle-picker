@@ -6,12 +6,13 @@
 """
 from __future__ import annotations
 
+import bisect
 import math
 import time
 from typing import Callable
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen, QRadialGradient
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen, QPixmap, QRadialGradient
 from PySide6.QtWidgets import QWidget
 
 from .core import Entry
@@ -20,6 +21,7 @@ from .i18n import T, font
 PALETTE = ["#4CB878", "#3D7DD8", "#F2C230", "#E8657A", "#8E6CD8", "#3FB7C4",
            "#F28C38", "#7FBF3F", "#D8579A", "#5B8DEF", "#E0A23A", "#4FA3A0"]
 TURNS = 6
+VECTOR_MAX = 120          # 멈춰 있을 때 칸이 이보다 적으면 매번 선명하게 그림 (많으면 미리 그린 면을 씀)
 
 
 def ease_out(u: float) -> float:
@@ -43,33 +45,38 @@ class WheelWidget(QWidget):
         self._won_at = 0.0
         self.ticks: list[float] = []      # 이번 회전에서 바늘이 칸을 넘는 순간들
         self.shadow = True
+        self._spans: list[tuple[float, float]] = []
+        self._starts: list[float] = []
+        self._face: QPixmap | None = None      # 칸 · 글자를 미리 그린 바퀴 면 (돌기 전 기준)
+        self._face_key: tuple | None = None
         self.timer = QTimer(self, timeout=self._tick, interval=16)
 
     # ── 목록 ──
     def set_entries(self, entries: list[Entry]) -> None:
-        if not self.spinning:
+        if not self.spinning and list(entries) != self.entries:     # 같은 목록이면 당첨 표시를 그대로 둠
             self.entries = list(entries)
-            self.winner = None
+            total = sum(e.weight for e in self.entries) or 1
+            self._spans, a = [], 0.0
+            for e in self.entries:
+                w = 360.0 * e.weight / total
+                self._spans.append((a, w))
+                a += w
+            self._starts = [a for a, _ in self._spans]
+            self.winner, self._face = None, None
             self.update()
 
     def spans(self) -> list[tuple[float, float]]:
         """칸마다 (시작 각, 넓이) — 12시에서 시계 방향, 바퀴가 돌기 전 기준."""
-        total = sum(e.weight for e in self.entries) or 1
-        out, a = [], 0.0
-        for e in self.entries:
-            w = 360.0 * e.weight / total
-            out.append((a, w))
-            a += w
-        return out
+        return self._spans
+
+    def _index_at(self, at: float) -> int:
+        """바퀴가 돌기 전 기준 각도 at 에 있는 칸 (항목이 수천 개여도 빠르게)."""
+        return max(0, min(len(self._starts) - 1, bisect.bisect_right(self._starts, at) - 1))
 
     def under_pointer(self) -> int:
         if not self.entries:
             return -1
-        at = (-self.rot) % 360.0
-        for i, (a, w) in enumerate(self.spans()):
-            if a <= at < a + w:
-                return i
-        return len(self.entries) - 1
+        return self._index_at((-self.rot) % 360.0)
 
     # ── 돌리기 ──
     def spin_to(self, idx: int, frac: float, seconds: float, done: Callable[[int], None]) -> None:
@@ -86,14 +93,13 @@ class WheelWidget(QWidget):
 
     def _tick_times(self) -> list[float]:
         """바늘이 칸 경계를 넘는 순간들 (초) — 틱 소리를 미리 한 파일로 만들려고."""
-        bounds = [a for a, _ in self.spans()]
         out: list[float] = []
         steps = int(self._dur * 500)
         last = None
         for k in range(steps + 1):
             t = self._dur * k / steps
             at = (-(self._from + (self._to - self._from) * ease_out(t / self._dur))) % 360.0
-            idx = sum(1 for b in bounds if b <= at) - 1
+            idx = self._index_at(at)
             if last is not None and idx != last and (not out or t - out[-1] > 0.012):
                 out.append(t)
             last = idx
@@ -144,25 +150,16 @@ class WheelWidget(QWidget):
             p.end()
             return
         rect = QRectF(c.x() - R, c.y() - R, 2 * R, 2 * R)
-        spans = self.spans()
-        n = len(spans)
-        colors = [PALETTE[i % len(PALETTE)] for i in range(n)]
-        if n > 1 and colors[-1] == colors[0]:                          # 처음·끝 칸이 같은 색이면
-            colors[-1] = PALETTE[(n + 1) % len(PALETTE)]
-        for i, (a, w) in enumerate(spans):
-            start = a + self.rot
-            path = QPainterPath(c)
-            path.arcTo(rect, 90 - start, -w)
-            path.closeSubpath()
-            col = QColor(colors[i])
-            if self.winner is not None and i != self.winner:
-                col = col.lighter(135)
-                col.setAlpha(150)
-            p.setPen(QPen(QColor(255, 255, 255, 200), 1.5 if n < 60 else 0.6))
-            p.setBrush(col)
-            p.drawPath(path)
-        for i, (a, w) in enumerate(spans):                            # 글자
-            self._label(p, c, R, a + self.rot, w, self.entries[i].name, i == self.winner)
+        spans = self._spans
+        if self.spinning or len(spans) > VECTOR_MAX:                  # 칸 · 글자: 미리 그린 면을 돌려서 (가볍게)
+            p.save()
+            p.setRenderHint(QPainter.SmoothPixmapTransform)
+            p.translate(c)
+            p.rotate(self.rot)
+            p.drawPixmap(QPointF(-R - 1, -R - 1), self._face_pixmap(R))
+            p.restore()
+        else:                                                         # 멈춰 있고 칸이 적으면 매번 선명하게
+            self._draw_face(p, c, R, self.rot)
         if self.winner is not None:                                   # 당첨 칸 테두리 반짝
             a, w = spans[self.winner]
             path = QPainterPath(c)
@@ -188,6 +185,43 @@ class WheelWidget(QWidget):
         p.setPen(QColor("#2E9E5B"))
         p.drawText(QRectF(c.x() - R * 0.15, c.y() - R * 0.15, R * 0.3, R * 0.3), Qt.AlignCenter, "奇跡")
         self._pointer(p, c, R)
+
+    def _draw_face(self, p: QPainter, c: QPointF, R: float, rot: float) -> None:
+        """칸과 글자 (rot 만큼 돌린 자리에)."""
+        rect = QRectF(c.x() - R, c.y() - R, 2 * R, 2 * R)
+        n = len(self._spans)
+        colors = [PALETTE[i % len(PALETTE)] for i in range(n)]
+        if n > 1 and colors[-1] == colors[0]:                          # 처음·끝 칸이 같은 색이면
+            colors[-1] = PALETTE[(n + 1) % len(PALETTE)]
+        p.setPen(QPen(QColor(255, 255, 255, 200), 1.5 if n < 60 else 0.6))
+        for i, (a, w) in enumerate(self._spans):
+            path = QPainterPath(c)
+            path.arcTo(rect, 90 - (a + rot), -w)
+            path.closeSubpath()
+            col = QColor(colors[i])
+            if self.winner is not None and i != self.winner:
+                col = col.lighter(135)
+                col.setAlpha(150)
+            p.setBrush(col)
+            p.drawPath(path)
+        for i, (a, w) in enumerate(self._spans):                      # 글자
+            self._label(p, c, R, a + rot, w, self.entries[i].name, i == self.winner)
+
+    def _face_pixmap(self, R: float) -> QPixmap:
+        """돌기 전 기준 바퀴 면. 항목 · 크기 · 당첨이 바뀔 때만 새로 그림 (2배로 그려서 돌려도 글자가 덜 뭉개지게)."""
+        scale = self.devicePixelRatioF() * 2
+        key = (round(R, 1), scale, self.winner)
+        if self._face is None or self._face_key != key:
+            side = 2 * R + 2
+            pm = QPixmap(math.ceil(side * scale), math.ceil(side * scale))
+            pm.setDevicePixelRatio(scale)
+            pm.fill(Qt.transparent)
+            q = QPainter(pm)
+            q.setRenderHint(QPainter.Antialiasing)
+            self._draw_face(q, QPointF(side / 2, side / 2), R, 0.0)
+            q.end()
+            self._face, self._face_key = pm, key
+        return self._face
 
     def _label(self, p: QPainter, c: QPointF, R: float, start: float, w: float, text: str, win: bool) -> None:
         h = 2 * R * 0.62 * math.sin(math.radians(min(w, 179.0)) / 2)   # 글자가 들어갈 칸 높이

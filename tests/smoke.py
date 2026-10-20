@@ -31,8 +31,8 @@ if os.environ.get("MIRACLE_SMOKE_SHOW") != "1":
     os.environ.setdefault("QT_QPA_FONTDIR", "C:/Windows/Fonts")
 sys.path.insert(0, str(ROOT))
 
-from PySide6.QtCore import Qt, QTimer  # noqa: E402
-from PySide6.QtGui import QGuiApplication  # noqa: E402
+from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt, QTimer, QUrl  # noqa: E402
+from PySide6.QtGui import QDragEnterEvent, QDropEvent, QGuiApplication  # noqa: E402
 from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox  # noqa: E402
 
 from miracle import app as mapp  # noqa: E402
@@ -437,6 +437,66 @@ def t_i18n() -> None:
         check(f"{code} 로 켜 보기 (창 · 무대 · 결과 · 기록에 한글 없음)", p.returncode == 0, last[:200] or p.stderr[-300:])
 
 
+def t_polish() -> None:
+    from miracle.about import REPO, AboutDialog
+    check("Qt 기본 글자 번역 (예/아니요)", mapp.install_qt_translations(app) and _yes_text() == "예(&Y)", _yes_text())
+    about = AboutDialog(win, mapp.TITLE, mapp.__version__, mstore.data_dir())
+    check("정보 창 (버전 · 저장소 링크 · 고지)", mapp.__version__ in about.text.text() and REPO in about.text.text()
+          and "2차 창작" in about.text.text())
+    about.close()
+    win.set_mode("wheel")
+    files = {"명단.txt": "가\n나\n다\n".encode("utf-8"),
+             "명단.csv": "이름,메모\r\n사나에,무녀\r\n레이무,무녀\r\n".encode("cp949"),
+             "utf16.txt": "하나\n둘".encode("utf-16"),
+             "그림.png": b"\x89PNG"}
+    for name, data in files.items():
+        (TMP / name).write_bytes(data)
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(str(TMP / "명단.txt"))])
+    enter = QDragEnterEvent(QPoint(10, 10), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)
+    win.editor.dragEnterEvent(enter)
+    win.editor.dropEvent(QDropEvent(QPointF(10, 10), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier))
+    check("txt 파일 끌어다 놓기", enter.isAccepted() and win.editor.toPlainText().strip() == "가\n나\n다"
+          and "불러왔어요" in win.stage.sanae.bubble, win.editor.toPlainText()[:20])
+    win._load_file(TMP / "명단.csv")
+    check("csv 파일 (CP949 · 칸마다 하나)", [e.name for e in core.parse(win.editor.toPlainText())]
+          == ["이름", "메모", "사나에", "무녀", "레이무", "무녀"])
+    win._load_file(TMP / "utf16.txt")
+    check("UTF-16 파일", win.editor.toPlainText() == "하나\n둘")
+    png = QMimeData()
+    png.setUrls([QUrl.fromLocalFile(str(TMP / "그림.png"))])
+    check("목록 파일이 아니면 받지 않음", mapp.ListEditor.dropped_file(png) is None)
+    with open(TMP / "큰.txt", "wb") as f:
+        f.truncate(mstore.MAX_IMPORT + 1)
+    win._load_file(TMP / "큰.txt")
+    check("너무 큰 파일은 사나에가 알려 줌", win.stage.sanae.mode == "oops" and win.editor.toPlainText() == "하나\n둘")
+    names = "\n".join(f"참가자{i}" for i in range(3000))
+    win.remove_winner.setChecked(False)
+    win.editor.setPlainText(names)
+    check("아주 긴 목록은 타자를 멈춘 뒤 반영", win._text_timer.isActive() and "3000" not in win.count.text())
+    win.act()
+    check("3000칸 룰렛 돌기", win.stage.wheel.spinning and len(win.stage.wheel.entries) == 3000)
+
+
+def _yes_text() -> str:
+    box = QMessageBox()
+    box.setStandardButtons(QMessageBox.Yes)
+    return box.button(QMessageBox.Yes).text()
+
+
+def t_polish2() -> None:
+    from miracle.lineup import _tail
+    d = store.history[0]
+    ok = d.mode == "wheel" and d.count == 3000
+    check("3000칸 룰렛 기록 · 시드로 다시", ok and core.parse(d.text)[core.spin(core.parse(d.text), d.seed)[0]].name
+          == d.result[0], d.result if ok else d.mode)
+    check("많은 칸은 미리 그린 면을 돌림", win.stage.wheel._face is not None)
+    check("반영됨 (항목 3000개)", "3000" in win.count.text(), win.count.text())
+    tail = _tail([str(i) for i in range(10)], 4)
+    check("다 안 들어가면 앞쪽은 줄임", tail[0] == (-1, "… 앞의 7명") and [i for i, _ in tail[1:]] == [7, 8, 9])
+    win.stage.cutin.finish()
+
+
 def t_sound() -> None:
     import wave
     ok = True
@@ -500,7 +560,14 @@ def t_stream2() -> None:
 
 
 def t_end() -> None:
-    win.close()                    # 실제 앱처럼 창을 닫아서 끝냄 (단축키 해제 · 설정 저장)
+    from PySide6.QtCore import QProcess
+    started = []
+    real = QProcess.startDetached
+    QProcess.startDetached = staticmethod(lambda exe, args: started.append((exe, list(args))) or True)
+    win._restart()                 # 언어를 바꿨을 때처럼 다시 시작 → 새 프로세스를 띄우고 창을 닫아서 끝냄
+    QProcess.startDetached = real
+    check("다시 시작 (같은 프로그램을 띄우고 창 닫기)", started and started[0][0] == sys.executable
+          and not win.isVisible(), started)
     app.quit()
 
 
@@ -508,7 +575,8 @@ STEPS = [(t_core, 10), (t_core2, 10), (t_gacha_core, 10), (t_wheel, 700), (t_whe
          (t_raffle2, 1500), (t_raffle3, 1600), (t_raffle4, 50), (t_lists, 50), (t_persist, 50),
          (t_ladder, 900), (t_ladder2, 300), (t_teams, 700), (t_teams2, 50), (t_order, 600), (t_order2, 50),
          (t_dice, 400), (t_dice2, 400), (t_dice3, 400), (t_dice4, 50), (t_gacha, 700), (t_gacha2, 50),
-         (t_presets, 50), (t_i18n, 50), (t_sound, 50), (t_stream, 500), (t_stream2, 50), (t_end, 0)]
+         (t_presets, 50), (t_i18n, 50), (t_polish, 900), (t_polish2, 50), (t_sound, 50), (t_stream, 500),
+         (t_stream2, 50), (t_end, 0)]
 
 
 def run(i: int = 0) -> None:

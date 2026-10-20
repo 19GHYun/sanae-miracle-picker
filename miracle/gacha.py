@@ -19,6 +19,11 @@ TEASE = 0.7                # 가장 귀한 등급: 뒤집기 전 금빛
 RANK_COLORS = [("#F6C83A", "#E8833A"), ("#B07CE8", "#7B4FD0"), ("#5BA8F0", "#3D6FD8"), ("#8FC9A0", "#5A9E70")]
 
 
+def _no_spaces(word: str) -> bool:
+    """띄어쓰기 없이 쓰는 글(가나 · 한자)이면 글자 단위로 줄바꿈해도 됨. 한글 · 영어 단어는 되도록 안 끊음."""
+    return any(0x3040 <= ord(ch) <= 0x30FF or 0x4E00 <= ord(ch) <= 0x9FFF for ch in word)   # 가나 · CJK 한자
+
+
 class GachaStage(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -196,7 +201,7 @@ class GachaStage(QWidget):
             fm = QFontMetricsF(f2)
             lines = self._wrap(item, f2, room)
             tall = len(lines) * fm.height() > inner.height() - 6
-            split = any(w.isascii() and fm.horizontalAdvance(w) > room for w in item.split(" "))
+            split = any(not _no_spaces(w) and fm.horizontalAdvance(w) > room for w in item.split(" "))
             if size <= 9 or not (tall or split):
                 break
             size -= 1

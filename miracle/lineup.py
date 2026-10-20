@@ -37,6 +37,24 @@ def _fit(p: QPainter, text: str, rect: QRectF, size: int, bold: bool = True, min
     p.drawText(rect, Qt.AlignLeft | Qt.AlignVCenter, QFontMetricsF(f).elidedText(text, Qt.ElideRight, rect.width()))
 
 
+def _grid(n: int, body: QRectF, line_max: float, line_min: float, max_cols: int) -> tuple[int, int, float, int]:
+    """n 줄을 body 에 열로 나눠 놓기: (한 열의 줄 수, 열 수, 줄 높이, 들어가는 줄 수 — 모자라면 n 보다 작음)."""
+    per_col = max(1, int(body.height() // line_max))
+    ncol = min(max_cols, max(1, math.ceil(n / per_col)))
+    per_col = max(per_col, math.ceil(n / ncol))                    # 열을 다 쓰면 줄을 촘촘하게
+    per_col = min(per_col, max(1, int(body.height() // line_min)))  # 그래도 글자가 안 보일 만큼은 아니게
+    return per_col, ncol, min(line_max, body.height() / per_col), min(n, per_col * ncol)
+
+
+def _tail(items: list[str], room: int) -> list[tuple[int, str]]:
+    """[(번호, 글)] — 다 안 들어가면 앞쪽은 "… 앞의 N명" 한 줄(번호 -1)로 줄이고 최근 것만."""
+    if len(items) <= room:
+        return list(enumerate(items))
+    keep = max(0, room - 1)
+    start = len(items) - keep
+    return [(-1, T("… 앞의 {n}명", n=start))] + [(start + k, x) for k, x in enumerate(items[start:])]
+
+
 class _Reveal(QWidget):
     """한 명씩 차례로 보여 주는 무대의 공통 부분."""
 
@@ -145,13 +163,15 @@ class TeamsStage(_Reveal):
             if not names:
                 continue
             body = r.adjusted(14, 44, -10, -8)
-            per_col = max(1, int(body.height() // 24))
-            ncol = math.ceil(len(names) / per_col)
-            cw = body.width() / max(1, ncol)
-            line_h = min(24.0, body.height() / max(1, min(per_col, len(names))))
-            for k, who in enumerate(names):
+            per_col, ncol, line_h, room = _grid(len(names), body, 24.0, 14.0, max(1, int(body.width() // 70)))
+            cw = body.width() / ncol
+            for k, (j, who) in enumerate(_tail(names, room)):
                 cell = QRectF(body.left() + (k // per_col) * cw, body.top() + (k % per_col) * line_h, cw - 6, line_h)
-                hot = newest is not None and newest == (i, who) and k == len(names) - 1
+                if j < 0:
+                    p.setPen(QColor("#7A8B80"))
+                    _fit(p, who, cell, 13, bold=False)
+                    continue
+                hot = newest is not None and newest == (i, who) and j == len(names) - 1
                 p.setPen(QColor("#C8102E") if hot else QColor("#22352A"))
                 _fit(p, f"· {who}", cell, 15 if hot else 14, bold=hot)
         p.end()
@@ -199,13 +219,14 @@ class OrderStage(_Reveal):
         if not shown:
             p.end()
             return
-        per_col = max(1, int(body.height() // 28))
-        ncol = min(4, max(1, math.ceil(len(self.names) / per_col)))
-        per_col = max(per_col, math.ceil(len(self.names) / ncol))
+        per_col, ncol, line_h, room = _grid(len(self.names), body, 28.0, 13.0, 4)
         cw = body.width() / ncol
-        line_h = min(28.0, body.height() / per_col)
-        for i, who in enumerate(shown):
-            cell = QRectF(body.left() + (i // per_col) * cw, body.top() + (i % per_col) * line_h, cw - 10, line_h)
+        for k, (i, who) in enumerate(_tail(shown, room)):
+            cell = QRectF(body.left() + (k // per_col) * cw, body.top() + (k % per_col) * line_h, cw - 10, line_h)
+            if i < 0:
+                p.setPen(QColor("#7A8B80"))
+                _fit(p, who, cell, 13, bold=False)
+                continue
             p.setPen(QColor("#2E9E5B"))
             _fit(p, f"{i + 1:>2}.", QRectF(cell.left(), cell.top(), 34, line_h), 14)
             p.setPen(QColor("#C8102E") if i == 0 else QColor("#22352A"))

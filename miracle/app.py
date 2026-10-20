@@ -2,6 +2,7 @@
 """사나에의 기적 추첨기 — 메인 창.
 
   MIRACLE_SPEED=0.05   연출 시간 배율 (시험용으로 빠르게)
+  MIRACLE_HIDDEN=1     창을 화면에 띄우지 않고 실행 (시험용 — 진짜 Windows 글꼴 · 스타일로 돌지만 보이지 않음)
 """
 from __future__ import annotations
 
@@ -13,7 +14,7 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QPointF, QRect, QRectF, Qt, QTimer
+from PySide6.QtCore import QByteArray, QLibraryInfo, QPointF, QRect, QRectF, Qt, QTimer, QTranslator, qVersion
 from PySide6.QtGui import (QColor, QGuiApplication, QIcon, QKeySequence, QLinearGradient, QPainter,
                            QPainterPath, QPen, QPixmap, QShortcut)
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox, QFileDialog, QHBoxLayout,
@@ -22,6 +23,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
                                QVBoxLayout, QWidget)
 
 from . import __version__, core, i18n, presets, sound
+from .about import AboutDialog
 from .cutin import MiracleCutIn
 from .dice import DiceStage
 from .gacha import GachaStage
@@ -29,7 +31,7 @@ from .ladder import LadderStage, is_blank
 from .lineup import OrderStage, TeamsStage
 from .raffle import RaffleStage
 from .sanae import IDLE_LINES, SPIN_LINES, SanaeWidget, Sprites
-from .store import Draw, Store, data_dir, now_text
+from .store import LIST_FILES, Draw, Store, data_dir, now_text, read_list_file
 from .stream import BACKGROUNDS, BG_COLORS, HOTKEYS, Hotkey, StreamWindow, obs_dir, write_obs
 from .wheel import WheelWidget
 from .i18n import T
@@ -38,6 +40,7 @@ log = logging.getLogger("Miracle")
 TITLE = T("사나에의 기적 추첨기")
 SPEED = float(os.environ.get("MIRACLE_SPEED") or 1.0)
 WHEEL_SECONDS = 5.5
+BIG_TEXT = 20_000          # 목록 글이 이보다 길면 타자를 멈춘 뒤 한 번에 반영 (수천 줄이어도 입력이 안 끊기게)
 MODES = (("wheel", T("🎡 룰렛")), ("raffle", T("🎫 당첨자 뽑기")), ("ladder", T("🔀 사다리")), ("teams", T("👥 팀 나누기")),
          ("order", T("🔢 순서 정하기")), ("dice", T("🎲 주사위")), ("gacha", T("🃏 가챠")))
 MODE_KEYS = [k for k, _ in MODES]
@@ -61,7 +64,7 @@ QPushButton#go:disabled { background: #9FBFAE; }
 QPushButton#small { background: #FFFFFF; color: #2E6B48; border: 1px solid #B9DEC6; border-radius: 8px; padding: 4px 9px; }
 QPushButton#small:hover { background: #E6F5EA; }
 QTabWidget#side::pane { background: #FFFFFF; border: 1px solid #CFE7D7; border-radius: 12px; }
-QTabBar::tab { background: transparent; padding: 8px 14px; font-family: 'Malgun Gothic'; font-weight: 700;
+QTabBar::tab { background: transparent; padding: 8px 10px; font-family: 'Malgun Gothic'; font-weight: 700;
                font-size: 13px; color: #6B7F72; }
 QTabBar::tab:selected { color: #2E9E5B; border-bottom: 2px solid #2E9E5B; }
 QPlainTextEdit, QListWidget, QLineEdit, QSpinBox, QComboBox { background: #FBFEFC; border: 1px solid #CFE7D7;
@@ -70,6 +73,11 @@ QListWidget::item { padding: 4px 2px; border-bottom: 1px solid #EEF6F0; }
 QListWidget::item:selected { background: #DFF2E5; color: #22352A; }
 QCheckBox { font-family: 'Malgun Gothic'; font-size: 12px; color: #22352A; }
 QComboBox#lang { font-size: 12px; padding: 1px 4px; margin: 0 2px 4px 0; }
+QPushButton#info { background: #FFFFFF; color: #2E6B48; border: 1px solid #B9DEC6; border-radius: 12px; padding: 0;
+                   font-size: 14px; font-weight: 700; min-width: 24px; max-width: 24px; min-height: 24px; max-height: 24px;
+                   margin: 0 0 4px 0; }
+QPushButton#info:hover { background: #E6F5EA; }
+QLabel#about { font-size: 13px; }
 """.replace("Malgun Gothic", i18n.font())                      # 언어마다 글꼴
 
 
@@ -190,11 +198,61 @@ class Stage(QWidget):
         p.end()
 
 
+class ListEditor(QPlainTextEdit):
+    """목록 칸: txt · csv 파일을 끌어다 놓으면 그 내용으로 바꿈 (다른 것은 원래대로)."""
+
+    def __init__(self, on_file):
+        super().__init__()
+        self.on_file = on_file
+
+    @staticmethod
+    def dropped_file(mime) -> Path | None:
+        for url in mime.urls() if mime.hasUrls() else []:
+            if url.isLocalFile() and url.toLocalFile().lower().endswith(LIST_FILES):
+                return Path(url.toLocalFile())
+        return None
+
+    def dragEnterEvent(self, e) -> None:
+        if self.dropped_file(e.mimeData()):
+            e.acceptProposedAction()
+        else:
+            super().dragEnterEvent(e)
+
+    def dragMoveEvent(self, e) -> None:
+        if self.dropped_file(e.mimeData()):
+            e.acceptProposedAction()
+        else:
+            super().dragMoveEvent(e)
+
+    def dropEvent(self, e) -> None:
+        path = self.dropped_file(e.mimeData())
+        if path:
+            e.acceptProposedAction()
+            self.on_file(path)
+        else:
+            super().dropEvent(e)
+
+
+def install_qt_translations(app: QApplication) -> bool:
+    """Qt 기본 글자 (예/아니요 단추, 글 칸의 오른쪽 클릭 메뉴 …)도 이 언어로."""
+    code = i18n.lang()
+    if code == "en":
+        return False
+    import PySide6
+    tr = QTranslator(app)
+    for folder in (QLibraryInfo.path(QLibraryInfo.TranslationsPath), str(Path(PySide6.__file__).parent / "translations")):
+        if tr.load(f"qtbase_{code}", folder):
+            return app.installTranslator(tr)
+    log.info("Qt 번역 없음: qtbase_%s", code)
+    return False
+
+
 class MainWindow(QMainWindow):
     def __init__(self, store: Store):
         super().__init__()
         self.store = store
         s = store.settings
+        self._text_timer = QTimer(self, singleShot=True, interval=350, timeout=self._apply_text)
         if store.fresh and not s.text:                           # 처음 켬: 그 언어의 점심 메뉴 · 기본 글자
             name = list(presets.presets(i18n.lang()))[2]
             s.list_name, s.text = name, presets.presets(i18n.lang())[name]
@@ -254,10 +312,21 @@ class MainWindow(QMainWindow):
         self.lang_box.setCurrentIndex([k for k, _ in i18n.LANGS].index(s.lang) if s.lang in dict(i18n.LANGS) else 0)
         self.lang_box.setToolTip(T("언어 (자동 = 시스템 언어 · 바꾸면 다시 시작해요)"))
         self.lang_box.activated.connect(self._lang_changed)
-        self.tabs.setCornerWidget(self.lang_box, Qt.TopRightCorner)
+        corner = QWidget()                                          # 탭 줄 오른쪽 끝: ⓘ 정보 · 언어
+        ch = QHBoxLayout(corner)
+        ch.setContentsMargins(0, 0, 0, 0)
+        ch.setSpacing(4)
+        info = QPushButton("ⓘ", objectName="info")
+        info.setToolTip(T("정보 · 도움말 (F1)"))
+        info.setCursor(Qt.PointingHandCursor)
+        info.clicked.connect(self.about)
+        ch.addWidget(info)
+        ch.addWidget(self.lang_box)
+        self.tabs.setCornerWidget(corner, Qt.TopRightCorner)
         h.addWidget(self.tabs)
         for keys in (Qt.Key_Space, "Ctrl+Return", "F5"):
             QShortcut(QKeySequence(keys), self, activated=self.act)
+        QShortcut(QKeySequence("F1"), self, activated=self.about)
         self._save_timer = QTimer(self, singleShot=True, interval=600, timeout=self._save_settings)
         self.resize(1100, 740)
         if s.geometry:
@@ -269,7 +338,7 @@ class MainWindow(QMainWindow):
         self.hotkey = Hotkey(self.act)
         self._set_hotkey(s.hotkey if s.hotkey in dict(HOTKEYS) else "off")
         self.set_mode(self.mode)
-        self._text_changed()
+        self._apply_text()
         self._refresh_history()
         self.result.setText(T("오른쪽에 목록을 적고 <b>✨ 기적을 일으키기!</b> (또는 Space)"))
         self.stage.sanae.say(random.choice(IDLE_LINES), 4.0)
@@ -295,9 +364,10 @@ class MainWindow(QMainWindow):
             row.addWidget(b)
         v.addLayout(row)
         self._fill_lists(s.list_name)
-        self.editor = QPlainTextEdit()
+        self.editor = ListEditor(self._load_file)
         self.editor.setPlaceholderText(T("한 줄에 하나씩 적어 주세요\n\n사나에\n레이무 x2   ← 두 배로 잘 뽑혀요\n마리사\n\n"
-                                       "엑셀에서 복사해 붙여도 되고,\n한 줄에 쉼표로 적어도 돼요 (짜장, 짬뽕, 볶음밥)"))
+                                       "엑셀에서 복사해 붙여도 되고,\n한 줄에 쉼표로 적어도 돼요 (짜장, 짬뽕, 볶음밥)\n\n"
+                                       "txt · csv 파일을 여기로 끌어다 놓아도 돼요"))
         self.editor.setPlainText(s.text)
         self.editor.textChanged.connect(self._text_changed)
         v.addWidget(self.editor, 1)
@@ -726,6 +796,12 @@ class MainWindow(QMainWindow):
                            + T("   ·   한 줄에 하나, '이름 x3' = 세 배"))
 
     def _text_changed(self) -> None:
+        if not self._programmatic and self.editor.document().characterCount() > BIG_TEXT:
+            self._text_timer.start()                             # 아주 긴 목록: 타자를 멈추면 한 번에
+            return
+        self._apply_text()
+
+    def _apply_text(self) -> None:
         entries = core.parse(self.editor.toPlainText())
         self._update_count()
         if not self._programmatic:
@@ -1219,6 +1295,26 @@ class MainWindow(QMainWindow):
         if sys.platform == "win32":
             os.startfile(str(d))
 
+    # ── 정보 · 파일 ──
+    def about(self) -> None:
+        AboutDialog(self, TITLE, __version__, data_dir()).exec()
+
+    def _load_file(self, path: Path) -> None:
+        """끌어다 놓은 목록 파일을 목록 칸으로 (저장 안 한 목록이 됨)."""
+        if self.busy:
+            return
+        try:
+            text = read_list_file(path, i18n.lang())
+        except (OSError, ValueError):
+            log.warning("목록 파일 읽기 실패: %s", path.name, exc_info=True)
+            self._oops(T("이 파일은 읽을 수 없어요 (5MB 이하의 txt · csv)"))
+            return
+        self.editor.setPlainText(text)
+        self.store.settings.list_name = ""
+        self._fill_lists("")
+        self.stage.sanae.say(T("「{name}」 불러왔어요!", name=path.name), 2.5)
+        log.info("목록 파일 불러옴: %s (%d자)", path.name, len(text))
+
 
 def _setup_logging() -> None:
     folder = data_dir() / "logs"
@@ -1238,8 +1334,12 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName(TITLE)
     app.setWindowIcon(app_icon())
+    translated = install_qt_translations(app)
     store = Store()
     win = MainWindow(store)
+    if os.environ.get("MIRACLE_HIDDEN") == "1":
+        win.setAttribute(Qt.WA_DontShowOnScreen, True)
     win.show()
-    log.info("%s v%s 시작", TITLE, __version__)
+    log.info("%s v%s 시작 (Qt %s · %s · %s · %s%s)", TITLE, __version__, qVersion(), app.platformName(),
+             app.style().name(), i18n.lang(), " · Qt 번역" if translated else "")
     return app.exec()

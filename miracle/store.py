@@ -133,3 +133,34 @@ class Store:
 
 def now_text() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+
+MAX_IMPORT = 5_000_000          # 끌어다 놓는 목록 파일 크기 한도 (바이트)
+LIST_FILES = (".txt", ".csv", ".tsv")
+
+
+def read_list_file(path: Path, prefer: str = "ko") -> str:
+    """목록 파일 → 목록 글. CSV 는 칸마다 탭으로 바꿔서 엑셀에서 붙여 넣은 것처럼 (칸마다 하나).
+
+    인코딩: BOM 이 있으면 그대로, 없으면 UTF-8 → (한국어 엑셀) CP949 · (일본어 엑셀) CP932.
+    """
+    if path.stat().st_size > MAX_IMPORT:
+        raise ValueError(f"too big: {path.stat().st_size}")
+    data = path.read_bytes()
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        text = data.decode("utf-16")
+    else:
+        order = ("utf-8-sig", "cp932", "cp949") if prefer == "ja" else ("utf-8-sig", "cp949", "cp932")
+        for enc in order:
+            try:
+                text = data.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            text = data.decode("latin-1")
+    if path.suffix.lower() == ".csv":
+        import io
+        rows = csv.reader(io.StringIO(text))
+        text = "\n".join("\t".join(cell.strip() for cell in row) for row in rows)
+    return text.replace("\r\n", "\n").replace("\r", "\n")
