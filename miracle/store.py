@@ -58,6 +58,7 @@ class Settings:
     background: str = "sky"
     hotkey: str = "off"
     obs_text: bool = False
+    cameo: bool = True              # 스와코 · 카나코 카메오
     gacha_pulls: int = 10
     gacha_guarantee: bool = True
     lang: str = "auto"

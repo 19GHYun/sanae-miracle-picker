@@ -106,11 +106,16 @@ class MiracleCutIn(QWidget):
         p.setPen(QPen(QColor(255, 255, 255, 200), 3))
         p.drawLine(QPointF(band.left() + 40, band.top() + 6), QPointF(band.right(), band.top() + 6))
         p.drawLine(QPointF(band.left(), band.bottom() - 6), QPointF(band.right() - 40, band.bottom() - 6))
-        seq = self.sp.seq("happy")                               # 사나에
-        img, anchor = self.sp.frames[seq[min(len(seq) - 1, int(t / 0.18) % len(seq))]]
+        jump = self.sp.seq("happy")                              # 사나에: 폴짝 뛰고 → 팔 벌려 "기적!"
+        if t < 0.18 * len(jump) or "miracle" not in self.sp.frames:
+            name, bob = jump[min(len(jump) - 1, int(t / 0.18) % len(jump))], 0.0
+        else:
+            name, bob = "miracle", math.sin(t * 6) * 2.0
+        img, anchor = self.sp.frames[name]
         k = band_h * 1.25 / self.sp.standing
         sx = band.left() + w * 0.16
-        p.drawImage(QRectF(sx - anchor.x() * k, band.bottom() + 8 - anchor.y() * k, img.width() * k, img.height() * k), img)
+        p.drawImage(QRectF(sx - anchor.x() * k, band.bottom() + 8 + bob - anchor.y() * k,
+                           img.width() * k, img.height() * k), img)
         tx = band.left() + w * 0.30
         tw = w * 0.66
         f = QFont(font(), 14)

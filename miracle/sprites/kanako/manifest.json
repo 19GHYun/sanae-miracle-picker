@@ -1,0 +1,26 @@
+{
+  "version": 2,
+  "standing_height": 200,
+  "facing": 1,
+  "frames": {
+    "idle_0": [
+      66,
+      206
+    ],
+    "blink": [
+      65,
+      206
+    ],
+    "thumbs": [
+      66,
+      205
+    ],
+    "cheer": [
+      69,
+      206
+    ]
+  },
+  "sources": [
+    "kanako2.png"
+  ]
+}

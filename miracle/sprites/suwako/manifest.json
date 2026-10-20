@@ -1,0 +1,26 @@
+{
+  "version": 2,
+  "standing_height": 200,
+  "facing": 1,
+  "frames": {
+    "idle_0": [
+      84,
+      206
+    ],
+    "blink": [
+      84,
+      206
+    ],
+    "thumbs": [
+      84,
+      206
+    ],
+    "cheer": [
+      83,
+      206
+    ]
+  },
+  "sources": [
+    "swako2.png"
+  ]
+}

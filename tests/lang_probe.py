@@ -105,6 +105,13 @@ for mode in mapp.MODE_KEYS:
         problems.append(f"no record for {mode}")
     no_hangul("sanae " + mode, win.stage.sanae.bubble)
 no_hangul("history list", "\n".join(win.hist.item(i).text() for i in range(win.hist.count())))
+from miracle.cameo import GODS  # noqa: E402
+for _color, lines in GODS.values():                        # 신님 대사
+    for line in lines:
+        no_hangul("cameo", line)
+win.stage.cameo.play()
+win.stage.cameo.started -= win.stage.cameo.length * 0.5
+win.stage.grab()
 
 teams = core.team_names(2, "color")
 checks = {

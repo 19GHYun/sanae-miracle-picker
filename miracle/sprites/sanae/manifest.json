@@ -122,6 +122,38 @@
     "walk_7": [
       65,
       205
+    ],
+    "cast_0": [
+      94,
+      207
+    ],
+    "cast_1": [
+      100,
+      200
+    ],
+    "cast_2": [
+      104,
+      201
+    ],
+    "miracle": [
+      89,
+      201
+    ],
+    "clap": [
+      86,
+      206
+    ],
+    "prize": [
+      99,
+      206
+    ],
+    "oops": [
+      82,
+      206
+    ],
+    "sigh": [
+      89,
+      206
     ]
   },
   "sources": [
@@ -129,7 +161,8 @@
     "sanae3.png",
     "sanae4.png",
     "sanae_run.png",
-    "sanae_run.png"
+    "sanae_run.png",
+    "sanae.png"
   ],
   "walk_cycles": 1
 }

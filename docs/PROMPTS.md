@@ -1,7 +1,8 @@
 # 그림 프롬프트
 
-지금(v0.1) 사나에 그림은 Hokora 에서 쓰던 사나에 스프라이트입니다 (`miracle/sprites/sanae/`).
-아래는 추첨기 연출을 더 풍성하게 할 새 그림들입니다. 기준 그림으로 `miracle/sprites/sanae/idle_0.png` 를 첨부합니다.
+사나에 기본 그림은 Hokora 에서 쓰던 스프라이트입니다 (`miracle/sprites/sanae/`).
+v1.1 에서 아래 프롬프트로 뽑은 시트로 추첨 연출 그림 8장과 스와코 · 카나코(카메오)를 더했습니다.
+기준 그림으로 `miracle/sprites/sanae/idle_0.png` 를 첨부합니다.
 
 ## 사나에 추첨 연출 시트 (8장, 자홍 배경)
 
@@ -30,7 +31,7 @@ no numbers, no text, no shadows.
 ```
 
 ```
-python tools/import_sheet.py 사나에추첨.png sanae --names cast_0,cast_1,cast_2,miracle,clap,prize,oops,sigh --append
+python tools/import_sheet.py 사나에추첨.png sanae --append --ref oops --names cast_0,cast_1,cast_2,miracle,clap,prize,oops,sigh
 ```
 
 ## 스와코 · 카나코 (카메오, 기준 그림 → 4장 시트)
@@ -88,4 +89,6 @@ with a green-to-blue gradient background. Centered, bold and readable even when 
 No text, no letters, no watermark.
 ```
 
-> `tools/import_sheet.py` 는 Hokora 저장소의 도구입니다. 필요해지면 이 저장소로 옮겨 옵니다.
+> `tools/import_sheet.py`: 시트에서 캐릭터를 하나씩 잘라 배경을 지우고 `miracle/sprites/<캐릭터>/` 에 넣는 도구
+> (Hokora 의 도구를 옮겨 온 것). 오른쪽 아래 ✦ 표시는 자동으로 지우고, `--append` 는 기존 그림에 더하기,
+> `--ref` 는 크기 기준 그림(이 그림의 키 = 200px). 미리보기는 `build/<캐릭터>_preview.png`.

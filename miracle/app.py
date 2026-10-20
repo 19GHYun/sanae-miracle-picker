@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
 
 from . import __version__, core, i18n, presets, sound
 from .about import AboutDialog
+from .cameo import CameoWidget
 from .cutin import MiracleCutIn
 from .dice import DiceStage
 from .gacha import GachaStage
@@ -41,6 +42,7 @@ TITLE = T("사나에의 기적 추첨기")
 SPEED = float(os.environ.get("MIRACLE_SPEED") or 1.0)
 WHEEL_SECONDS = 5.5
 BIG_TEXT = 20_000          # 목록 글이 이보다 길면 타자를 멈춘 뒤 한 번에 반영 (수천 줄이어도 입력이 안 끊기게)
+CAMEO_CHANCE = 0.2         # 컷인 때 신님이 축하하러 올 확률 (가챠 최고 등급은 꼭). 연출용 — 추첨 결과와 무관
 MODES = (("wheel", T("🎡 룰렛")), ("raffle", T("🎫 당첨자 뽑기")), ("ladder", T("🔀 사다리")), ("teams", T("👥 팀 나누기")),
          ("order", T("🔢 순서 정하기")), ("dice", T("🎲 주사위")), ("gacha", T("🃏 가챠")))
 MODE_KEYS = [k for k, _ in MODES]
@@ -128,6 +130,7 @@ class Stage(QWidget):
                        "order": self.order, "dice": self.dice, "gacha": self.gacha}
         self.sanae = SanaeWidget(self)
         self.cutin = MiracleCutIn(self)
+        self.cameo = CameoWidget(self)       # 스와코 · 카나코 (오른쪽 아래, 컷인보다 위)
         self.mode = "wheel"
         self.bg = "sky"                   # 하늘 / 크로마키 (magenta · blue · green)
 
@@ -157,9 +160,13 @@ class Stage(QWidget):
             board.setGeometry(area)
         self.sanae.move(round(-30 * f), h - self.sanae.height() + 2)
         self.sanae.raise_()
+        self.cameo.set_scale(f)
+        self.cameo.move(w - self.cameo.width() - round(6 * f), h - self.cameo.height())
         if self.cutin.isVisible():
             self.cutin.setGeometry(self.rect())
             self.cutin.raise_()
+        if self.cameo.isVisible():
+            self.cameo.raise_()
 
     def paintEvent(self, _e) -> None:
         p = QPainter(self)
@@ -896,7 +903,7 @@ class MainWindow(QMainWindow):
         d = Draw(now_text(), "wheel", self._title(), len(entries), seed, core.fingerprint(entries), [name], text)
         self.store.add(d)
         self._refresh_history()
-        self.stage.sanae.set_mode("happy", T("「{name}」! 기적이에요!", name=name), 5.5)
+        self.stage.sanae.set_mode("happy", T("「{name}」! 기적이에요!", name=name), 5.5, pose="clap")
         self._miracle(T("✨ 기적 발생! ✨"), name)
         self._obs("wheel", [name])
         self.result.setText(T("🎡 결과: <b>{name}</b>   ·   {v3}개 중   ·   시드 {v5}", name=name, v3=len(entries), v5=core.seed_text(seed)))
@@ -939,9 +946,10 @@ class MainWindow(QMainWindow):
     def _revealed(self, tier: str, name: str, n: int, total: int) -> None:
         if n == total:
             self._miracle(T("✨ {tier} — 기적 발생! ✨", tier=tier), name)
-            self.stage.sanae.set_mode("happy", T("{tier}은(는) 「{name}」! 축하해요!", tier=tier, name=name), 4.0)
+            self.stage.sanae.set_mode("happy", T("{tier}은(는) 「{name}」! 축하해요!", tier=tier, name=name), 4.0,
+                                      pose="prize")
         else:
-            self.stage.sanae.set_mode("happy", T("{tier}: 「{name}」!", tier=tier, name=name), 2.5)
+            self.stage.sanae.set_mode("happy", T("{tier}: 「{name}」!", tier=tier, name=name), 2.5, pose="prize")
             sound.play("win")
         self._update_go()
 
@@ -979,10 +987,10 @@ class MainWindow(QMainWindow):
 
     def _ladder_step(self, name: str, result: str) -> None:
         if is_blank(result):
-            self.stage.sanae.say(f"{name}: {result}", 1.6)
+            self.stage.sanae.set_mode("sigh", f"{name}: {result}", 1.6)
             sound.play("pop")
         else:
-            self.stage.sanae.set_mode("happy", T("「{name}」 → {result}!", name=name, result=result), 2.5)
+            self.stage.sanae.set_mode("happy", T("「{name}」 → {result}!", name=name, result=result), 2.5, pose="clap")
             sound.play("win")
 
     def _ladder_done(self) -> None:
@@ -1011,7 +1019,7 @@ class MainWindow(QMainWindow):
 
     def _teams_done(self) -> None:
         entries, seed, text, result = self._pending
-        self.stage.sanae.set_mode("happy", T("팀이 정해졌어요! 다들 힘내요~"), 4.0)
+        self.stage.sanae.set_mode("happy", T("팀이 정해졌어요! 다들 힘내요~"), 4.0, pose="clap")
         self._miracle(T("✨ 팀 나누기 완료 ✨"), T("{v0}팀 · {v2}명", v0=len(result), v2=len(entries)))
         self._record("teams", self._title(), len(entries), seed, entries, [[t, list(m)] for t, m in result], text)
 
@@ -1029,7 +1037,7 @@ class MainWindow(QMainWindow):
 
     def _order_done(self) -> None:
         entries, seed, text, result = self._pending
-        self.stage.sanae.set_mode("happy", T("1번은 「{v1}」!", v1=result[0]), 4.0)
+        self.stage.sanae.set_mode("happy", T("1번은 「{v1}」!", v1=result[0]), 4.0, pose="clap")
         self._miracle(T("✨ 1번은… ✨"), result[0])
         self._record("order", self._title(), len(entries), seed, entries, result, text)
 
@@ -1052,7 +1060,7 @@ class MainWindow(QMainWindow):
         ranks = self._pending[4]
         rank = ranks.index(rarity)
         if rank == 0 and len(ranks) > 1:
-            self.stage.sanae.set_mode("happy", T("{rarity}! 「{item}」!", rarity=rarity, item=item), 2.5)
+            self.stage.sanae.set_mode("happy", T("{rarity}! 「{item}」!", rarity=rarity, item=item), 2.5, pose="miracle")
             sound.play("win")
         elif rank == 1 and len(ranks) > 2:
             sound.play("ding")
@@ -1064,9 +1072,12 @@ class MainWindow(QMainWindow):
         best = min(ranks.index(r) for r, _ in cards)
         top = [item for r, item in cards if ranks.index(r) == best]
         if best == 0 and len(ranks) > 1:
-            self._miracle(T("✨ {v1} 기적 발생! ✨", v1=ranks[0]), ", ".join(top))
+            self._miracle(T("✨ {v1} 기적 발생! ✨", v1=ranks[0]), ", ".join(top), rare=True)
+        elif best == len(ranks) - 1 and len(ranks) > 1:                 # 전부 가장 흔한 등급
+            self.stage.sanae.set_mode("sigh", T("아쉬워요… 다음엔 기적을!"), 3.0)
+            sound.play("pop")
         else:
-            self.stage.sanae.set_mode("happy", f"{ranks[best]}: {', '.join(top)}", 4.0)
+            self.stage.sanae.set_mode("happy", f"{ranks[best]}: {', '.join(top)}", 4.0, pose="clap")
             sound.play("ding")
         self._record("gacha", self._title(), sum(len(r.items) for r in pool), seed, core.pool_entries(pool),
                      [ranks, [list(c) for c in cards]], text)
@@ -1107,7 +1118,7 @@ class MainWindow(QMainWindow):
             big = T("{v0}면!", v0=values[0])
         else:
             big = ", ".join(str(v) for v in values)
-        self.stage.sanae.set_mode("happy", T("{big}! 기적이에요~", big=big), 4.0)
+        self.stage.sanae.set_mode("happy", T("{big}! 기적이에요~", big=big), 4.0, pose="clap")
         self._miracle(f"✨ {label} ✨", big, burst=60, sound_name="coin" if kind == "coin" else "fanfare")
         self._record("dice", label, len(values), seed, [], [label, values], "")
 
@@ -1135,6 +1146,7 @@ class MainWindow(QMainWindow):
         s.background = self.bg_box.currentData()
         s.hotkey = self.hotkey_box.currentData()
         s.obs_text = self.obs_on.isChecked()
+        s.cameo = self.cameo_on.isChecked()
         s.gacha_pulls = self.gacha_pulls.value()
         s.gacha_guarantee = self.gacha_guarantee.isChecked()
         s.lang = self.lang_box.currentData()
@@ -1149,9 +1161,11 @@ class MainWindow(QMainWindow):
         super().closeEvent(e)
 
     # ── 연출 · 효과음 ──
-    def _miracle(self, title: str, text: str, burst: int = 90, sound_name: str = "fanfare") -> None:
+    def _miracle(self, title: str, text: str, burst: int = 90, sound_name: str = "fanfare", rare: bool = False) -> None:
         sound.play(sound_name)
         self.stage.cutin.play(title, text, SPEED, burst=burst, hide=self.stage.sanae)
+        if self.cameo_on.isChecked() and (rare or random.random() < CAMEO_CHANCE):
+            self.stage.cameo.play(speed=SPEED)
 
     def _oops(self, text: str) -> None:
         self.stage.sanae.set_mode("oops", text, 3.0)
@@ -1195,6 +1209,11 @@ class MainWindow(QMainWindow):
         self.bg_box.currentIndexChanged.connect(self._bg_changed)
         v.addWidget(self.bg_box)
         hint(T("OBS 의 크로마 키 필터로 배경을 지울 수 있어요. 사나에 머리가 초록이라 자홍·파랑을 추천해요."))
+        self.cameo_on = QCheckBox(T("🐸 가끔 스와코 · 카나코가 축하하러 와요"))
+        self.cameo_on.setChecked(s.cameo)
+        self.cameo_on.setToolTip(T("가챠 최고 등급이 나오면 꼭, 다른 결과 발표 때는 가끔 (결과와는 상관없는 연출)"))
+        self.cameo_on.toggled.connect(self._queue_save)
+        v.addWidget(self.cameo_on)
         v.addSpacing(6)
         v.addWidget(QLabel(T("<b>📺 방송 창</b>")))
         self.stream_btn = QPushButton(T("📺 무대만 따로 띄우기"), objectName="small")

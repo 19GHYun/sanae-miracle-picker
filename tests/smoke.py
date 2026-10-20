@@ -497,6 +497,49 @@ def t_polish2() -> None:
     win.stage.cutin.finish()
 
 
+def t_cameo() -> None:
+    from miracle.sanae import Sprites
+    for key in ("suwako", "kanako"):
+        check(f"{key} 그림 (가만히 · 눈 감기 · 엄지척 · 만세)",
+              {"idle_0", "blink", "thumbs", "cheer"} <= set(Sprites(key).frames))
+    sanae = win.stage.sanae
+    check("사나에 새 그림 8장", {"cast_0", "cast_1", "cast_2", "miracle", "clap", "prize", "oops", "sigh"}
+          <= set(sanae.sp.frames))
+    sanae.set_mode("spin")
+    spin = sanae.frame()[0]
+    sanae.set_mode("happy", pose="prize")
+    sanae.mode_at -= 1.5                                   # 폴짝 뛴 뒤
+    prize = sanae.frame()[0]
+    sanae.set_mode("sigh")
+    sigh = sanae.frame()[0]
+    sanae.set_mode("oops")
+    oops = sanae.frame()[0]
+    sanae.set_mode("idle")
+    check("사나에 자세 (고헤이 · 봉투 · 한숨 · 머쓱)", spin.startswith("cast_") and (prize, sigh, oops)
+          == ("prize", "sigh", "oops"), (spin, prize, sigh, oops))
+    cam = win.stage.cameo
+    check("카메오 동작 (만세 → 눈 깜빡 → 엄지척)", [cam.pose(u)[0] for u in (0.2, 0.68, 0.8)] == ["cheer", "blink", "thumbs"])
+    win.cameo_on.setChecked(True)
+    win._miracle("✨ 시험 ✨", "카메오", rare=True)
+    check("가챠 최고 등급 → 신님 카메오", cam.active and cam.who in ("suwako", "kanako") and bool(cam.line), cam.who)
+    cam.started -= cam.length * 0.5                        # 다 올라온 때
+    img = cam.grab().toImage()
+    opaque = sum(img.pixelColor(x, y).alpha() > 200 for y in range(0, img.height(), 4) for x in range(0, img.width(), 4))
+    check("카메오 그림이 그려짐", opaque > 50, opaque)
+
+
+def t_cameo2() -> None:
+    check("카메오는 잠깐 뒤 내려감", not win.stage.cameo.active)
+    win.stage.cutin.finish()
+    win.cameo_on.setChecked(False)
+    win._miracle("✨ 시험 ✨", "카메오", rare=True)
+    check("카메오를 끄면 안 나옴", not win.stage.cameo.active)
+    win.stage.cutin.finish()
+    win._save_settings()
+    check("카메오 설정 저장", mstore.Store().settings.cameo is False)
+    win.cameo_on.setChecked(True)
+
+
 def t_sound() -> None:
     import wave
     ok = True
@@ -575,7 +618,8 @@ STEPS = [(t_core, 10), (t_core2, 10), (t_gacha_core, 10), (t_wheel, 700), (t_whe
          (t_raffle2, 1500), (t_raffle3, 1600), (t_raffle4, 50), (t_lists, 50), (t_persist, 50),
          (t_ladder, 900), (t_ladder2, 300), (t_teams, 700), (t_teams2, 50), (t_order, 600), (t_order2, 50),
          (t_dice, 400), (t_dice2, 400), (t_dice3, 400), (t_dice4, 50), (t_gacha, 700), (t_gacha2, 50),
-         (t_presets, 50), (t_i18n, 50), (t_polish, 900), (t_polish2, 50), (t_sound, 50), (t_stream, 500),
+         (t_presets, 50), (t_i18n, 50), (t_polish, 900), (t_polish2, 50), (t_cameo, 400), (t_cameo2, 50),
+         (t_sound, 50), (t_stream, 500),
          (t_stream2, 50), (t_end, 0)]
 
 

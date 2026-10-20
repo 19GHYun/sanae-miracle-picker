@@ -49,7 +49,7 @@ SPIN_LINES = [T("바람이여~ 기적을!"), T("에잇! 기적을 일으켜 볼�
 
 
 class SanaeWidget(QWidget):
-    """사나에 + 말풍선. 동작: idle / spin / happy / oops. 클릭은 통과."""
+    """사나에 + 말풍선. 동작: idle / spin(고헤이 휘두르기) / happy(폴짝 → 자세) / oops(머쓱) / sigh(아쉬움). 클릭은 통과."""
 
     W, H = 300, 330
     BUBBLE_H = 92
@@ -63,6 +63,7 @@ class SanaeWidget(QWidget):
         self.k = height / self.sp.standing
         self.mode = "idle"
         self.mode_at = time.monotonic()
+        self.pose: str | None = None     # happy 에서 폴짝 뛴 뒤의 자세 (clap · prize · miracle …, 없으면 손 흔들기)
         self.bubble = ""
         self.bubble_until = 0.0
         self.blink_at = time.monotonic() + 3.0
@@ -77,10 +78,17 @@ class SanaeWidget(QWidget):
             self.setFixedSize(round(self.W * f), round(self.H * f))
             self.update()
 
-    def set_mode(self, mode: str, line: str | None = None, seconds: float = 3.0) -> None:
-        self.mode, self.mode_at = mode, time.monotonic()
+    def set_mode(self, mode: str, line: str | None = None, seconds: float = 3.0, pose: str | None = None) -> None:
+        self.mode, self.mode_at, self.pose = mode, time.monotonic(), pose
         if line:
             self.say(line, seconds)
+
+    def _seq(self, *kinds: str) -> list[str]:
+        """처음으로 그림이 있는 동작의 그림들 (새 그림이 없으면 예전 그림으로)."""
+        for kind in kinds:
+            if kind in self.sp.frames or f"{kind}_0" in self.sp.frames:
+                return self.sp.seq(kind)
+        return self.sp.seq("idle")
 
     def say(self, text: str, seconds: float = 3.0) -> None:
         self.bubble, self.bubble_until = text, time.monotonic() + seconds
@@ -89,20 +97,23 @@ class SanaeWidget(QWidget):
         """지금 그릴 그림 이름과 위아래 흔들림."""
         now = time.monotonic()
         t = now - self.mode_at
-        if self.mode == "spin":
-            seq = self.sp.seq("skill")
+        if self.mode == "spin":                                   # 고헤이를 들고 · 휘두르고 · 가리킴
+            seq = self._seq("cast", "skill")
             return seq[int(t / 0.22) % len(seq)], -abs(math.sin(t * 9)) * 3
         if self.mode == "happy":
             jump = self.sp.seq("happy")
             if t < 0.9:
                 return jump[min(len(jump) - 1, int(t / 0.9 * len(jump)))], 0.0
             if t < 3.2:
+                if self.pose in self.sp.frames:
+                    return self.pose, math.sin(t * 5) * 1.0
                 wave = self.sp.seq("wave")
                 return wave[int(t / 0.35) % len(wave)], 0.0
             self.mode, self.mode_at = "idle", now
-        if self.mode == "oops":
-            if t < 2.2:
-                return self.sp.seq("caught")[0], math.sin(t * 30) * 1.5 if t < 0.4 else 0.0
+        if self.mode in ("oops", "sigh"):                         # 머쓱 · 아쉬움
+            if t < 2.6:
+                name = self._seq(self.mode, "caught")[0]
+                return name, math.sin(t * 30) * 1.5 if self.mode == "oops" and t < 0.4 else 0.0
             self.mode, self.mode_at = "idle", now
         if self.blink_at <= now < self.blink_at + 0.15 and "blink" in self.sp.frames:
             return "blink", 0.0
